@@ -1,0 +1,43 @@
+{
+    "value": "todo",
+    "children": [
+        {
+            "value": "fix computers",
+            "children": [
+                {
+                    "value": "make tree editor",
+                    "children": [{"value":"do this first", "children":[]}]
+                },
+                {
+                    "value": "make distributed type system",
+                    "children": []
+                },
+                {
+                    "value": "make distributed data editor for placeholder protocol",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "value": "fix the discourse",
+            "children": [
+                {
+                    "value": "build robust foundation for user-extensible social computing (above)",
+                    "children": []
+                },
+                {
+                    "value": "grab nlnet grant for web of trust moderation",
+                    "children": []
+                },
+                {
+                    "value": "make a hybrid social network",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "value": "ball",
+            "children": []
+        }
+    ]
+}
