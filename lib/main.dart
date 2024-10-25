@@ -1417,8 +1417,8 @@ class TreeWidgetConf {
         //   (Color.fromARGB(255, 223, 198, 174), 6),
         // ]);
         gradient(const [
-          (Color.fromARGB(255, 250, 250, 250), 3),
-          (Color.fromARGB(255, 207, 207, 207), 2),
+          (Color.fromARGB(255, 250, 250, 250), 2),
+          (Color.fromARGB(255, 216, 216, 216), 2),
         ]);
   }
 }
@@ -1541,7 +1541,7 @@ class TreeWidgetRenderObject extends RenderBox
         position = SmoothV2.unset(duration: conf.defaultAnimationDuration),
         treeDepth = Easer(treeDepth.toDouble()),
         highlighted = Easer(highlighted ? 1 : 0),
-        highlightPulser = Pulser(duration: 140) {
+        highlightPulser = Pulser(duration: 190) {
     setCursorState(cursorState);
     registerEaser(this.highlighted);
     registerEaser(highlightPulser);
@@ -1592,8 +1592,8 @@ class TreeWidgetRenderObject extends RenderBox
           Radius.circular(
               conf.nodeBackgroundCornerRounding)), // 10 is the corner radius
       Paint()
-        ..color = lightenOrDimDependingOnBrightness(
-            color, highlightPulser.v() * 0.045)
+        ..color =
+            lightenOrDimDependingOnBrightness(color, highlightPulser.v() * 0.05)
         ..style = PaintingStyle.fill,
     );
 
