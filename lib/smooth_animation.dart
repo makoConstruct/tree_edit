@@ -18,6 +18,11 @@ double sq(double a) {
   return a * a;
 }
 
+double clampUnit(double v) => max(0, min(1, v));
+
+double progressOverTime(double duration, double v) =>
+    clampUnit((v - currentTime()) / duration);
+
 double linearAccelerationEaseInOutWithInitialVelocity(
     double t, double initialVelocity) {
   return t *
@@ -163,29 +168,52 @@ const double _midpoint = 0.3;
 double defaultPulserFunction(double v) =>
     v < _midpoint ? v / _midpoint : 1 - (v - _midpoint) / (1 - _midpoint);
 
-/// pulses to 1 and sags to 0. Is fairly graceful when interrupted, allowing pulses to overlap.
-class Pulser extends Animator {
+/// pulses to 1 and sags to 0. Is fairly graceful when interrupted, allowing pulses to overlap. T is a fold over the pulse
+class PulserFold<T> extends Animator {
   @override
   double duration;
-  List<double> pulseStarts = [];
-  double Function(double) pulseFunction;
-  Pulser({this.duration = 200, this.pulseFunction = defaultPulserFunction});
-  void pulse() {
-    pulseStarts.add(currentTime());
+  T zero;
+  List<(double, T)> pulseStarts = [];
+
+  /// pulseTime is the amount of time that's passed since this pulse started. For pulses in the future, it will be negative. For pulses in the past, it will be large. You usually want to get the pulse progress as clampUnit(pulseTime/duration)
+  T Function(T accumulator, double pulseTime, T pulseValue) folder;
+  PulserFold({this.duration = 200, required this.folder, required this.zero});
+  void pulse(T v) {
+    pulseStarts.add((currentTime(), v));
     notifyListeners();
   }
 
-  double v() {
-    double r = 0;
+  T v() {
+    T r = zero;
     double ct = currentTime();
     for (var s in pulseStarts) {
-      double tp = ct - s;
+      double tp = ct - s.$1;
       if (tp > 0 && tp < duration) {
-        r = max(r, pulseFunction(tp / duration));
+        r = folder(r, tp, s.$2);
       }
     }
     return r;
   }
+}
+
+class Pulser extends PulserFold<double> {
+  double Function(double) pulseFunction;
+  Pulser({super.duration = 200, this.pulseFunction = defaultPulserFunction})
+      : super(
+            folder: (a, t, _) => pulseFunction(clampUnit(t / duration)),
+            zero: 0);
+  void pulseThat() {
+    // this pulser doesn't pay attention to the pulse value, only the time
+    super.pulse(0);
+  }
+}
+
+class BumpPulse extends PulserFold<Offset> {
+  BumpPulse({super.duration})
+      : super(
+            folder: (Offset acc, double bt, Offset b) =>
+                acc + b * defaultPulserFunction(clampUnit(bt / duration)),
+            zero: Offset.zero);
 }
 
 class Easer extends Animator {

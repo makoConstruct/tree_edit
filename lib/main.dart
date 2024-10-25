@@ -1180,28 +1180,13 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
     children.value = widget.children;
   }
 
-  // insertNode(String? text, int after){}
   @override
   Widget build(BuildContext context) {
-    // notice focus changes
     var theme = Theme.of(context);
-    // editFocusNode.addListener(() {
-    //   setState(() {});
-    // });
-    // var color = focusNode.hasFocus
-    // var color = hovering
-    //     ? const Color.fromARGB(255, 87, 87, 87)
-    //     : const Color(0xff000000);
     var color = const Color(0xff000000);
     var textTheme = theme.textTheme.bodySmall!.copyWith(color: color);
 
-    // var result = TextField(
-    //     decoration: null,
-    //     minLines: null,
-    //     maxLines: null,
-    //     controller: controller);
-
-    // mainly using EditableText instead of the above for forceLine
+    // decided to use EditableText instead of TextField for forceLine
     // click drag for selection still doesn't work. But actually don't fix that, we also want rich text, so we're going to switch to SuperEditor
     // var ic = stringBeginning(content.value);
 
@@ -1426,15 +1411,15 @@ class TreeWidgetConf {
     List<Color>? nodeBackgroundColors,
   }) {
     this.nodeBackgroundColors = nodeBackgroundColors ??
+        // gradient(const [
+        //   (Color.fromARGB(255, 250, 250, 250), 3),
+        //   (Color.fromARGB(255, 207, 207, 207), 2),
+        //   (Color.fromARGB(255, 223, 198, 174), 6),
+        // ]);
         gradient(const [
           (Color.fromARGB(255, 250, 250, 250), 3),
           (Color.fromARGB(255, 207, 207, 207), 2),
-          (Color.fromARGB(255, 223, 198, 174), 6),
         ]);
-    // gradient(const [
-    //   (Color.fromARGB(255, 250, 250, 250), 3),
-    //   (Color.fromARGB(255, 207, 207, 207), 2),
-    // ]);
   }
 }
 
@@ -1509,7 +1494,7 @@ class TreeWidget extends MultiChildRenderObjectWidget {
     if (ro.highlighted.endValue != nh) {
       ro.highlighted.approach(highlighted ? 1 : 0);
       if (highlighted) {
-        ro.highlightPulser.pulse();
+        ro.highlightPulser.pulseThat();
       }
     }
     if (ro.cursorState != cursorState) {
@@ -1556,7 +1541,7 @@ class TreeWidgetRenderObject extends RenderBox
         position = SmoothV2.unset(duration: conf.defaultAnimationDuration),
         treeDepth = Easer(treeDepth.toDouble()),
         highlighted = Easer(highlighted ? 1 : 0),
-        highlightPulser = Pulser(duration: conf.defaultAnimationDuration) {
+        highlightPulser = Pulser(duration: 140) {
     setCursorState(cursorState);
     registerEaser(this.highlighted);
     registerEaser(highlightPulser);
@@ -1581,14 +1566,11 @@ class TreeWidgetRenderObject extends RenderBox
     var animatedDimensions = span.v();
 
     var td = treeDepth.v();
+    int nl = conf.nodeBackgroundColors.length;
     var color = td == td.toInt()
-        ? conf.nodeBackgroundColors[td.toInt()]
-        : hslerp(
-            conf.nodeBackgroundColors[
-                td.floor() % conf.nodeBackgroundColors.length],
-            conf.nodeBackgroundColors[
-                (td.floor() + 1) % conf.nodeBackgroundColors.length],
-            td - td.floor());
+        ? conf.nodeBackgroundColors[td.toInt() % nl]
+        : hslerp(conf.nodeBackgroundColors[td.floor() % nl],
+            conf.nodeBackgroundColors[(td.floor() + 1) % nl], td - td.floor());
     int lightenComponent(int v, double amount) =>
         min(255, max(0, v + (255 * amount).toInt()));
     Color lighten(Color v, double amount) => Color.fromARGB(
@@ -1598,6 +1580,11 @@ class TreeWidgetRenderObject extends RenderBox
           lightenComponent(v.blue, amount),
         );
 
+    Color lightenOrDimDependingOnBrightness(Color v, double amount) =>
+        HSLuvColor.fromColor(v).lightness > 100 * (1 - amount)
+            ? lighten(v, -amount)
+            : lighten(v, amount);
+
     context.canvas.drawRRect(
       RRect.fromRectAndRadius(
           Rect.fromLTWH(offset.dx, offset.dy, animatedDimensions.dx,
@@ -1605,7 +1592,8 @@ class TreeWidgetRenderObject extends RenderBox
           Radius.circular(
               conf.nodeBackgroundCornerRounding)), // 10 is the corner radius
       Paint()
-        ..color = lighten(color, highlightPulser.v() * -0.03)
+        ..color = lightenOrDimDependingOnBrightness(
+            color, highlightPulser.v() * 0.045)
         ..style = PaintingStyle.fill,
     );
 
