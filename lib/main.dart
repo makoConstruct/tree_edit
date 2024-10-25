@@ -1589,6 +1589,14 @@ class TreeWidgetRenderObject extends RenderBox
             conf.nodeBackgroundColors[
                 (td.floor() + 1) % conf.nodeBackgroundColors.length],
             td - td.floor());
+    int lightenComponent(int v, double amount) =>
+        min(255, max(0, v + (255 * amount).toInt()));
+    Color lighten(Color v, double amount) => Color.fromARGB(
+          v.alpha,
+          lightenComponent(v.red, amount),
+          lightenComponent(v.green, amount),
+          lightenComponent(v.blue, amount),
+        );
 
     context.canvas.drawRRect(
       RRect.fromRectAndRadius(
@@ -1597,24 +1605,25 @@ class TreeWidgetRenderObject extends RenderBox
           Radius.circular(
               conf.nodeBackgroundCornerRounding)), // 10 is the corner radius
       Paint()
-        ..color = color
+        ..color = lighten(color, highlightPulser.v() * -0.03)
         ..style = PaintingStyle.fill,
     );
 
-    var hp = highlightPulser.v();
-    if (hp != 0) {
-      context.canvas.drawRRect(
-        RRect.fromRectAndRadius(
-                Rect.fromLTWH(offset.dx, offset.dy, size.width, size.height),
-                Radius.circular(conf.nodeBackgroundCornerRounding))
-            .inflate(
-                conf.nodeHighlightOutlineInflation), // 10 is the corner radius
-        Paint()
-          ..color = conf.nodeHighlightStrokeColor.withAlpha((255 * hp).toInt())
-          ..strokeWidth = conf.nodeStrokeWidth
-          ..style = PaintingStyle.stroke,
-      );
-    }
+    // this was kind of cool but was also obscene. Maybe the duration just needed to be lower?
+    // var hp = highlightPulser.v();
+    // if (hp != 0) {
+    //   context.canvas.drawRRect(
+    //     RRect.fromRectAndRadius(
+    //             Rect.fromLTWH(offset.dx, offset.dy, size.width, size.height),
+    //             Radius.circular(conf.nodeBackgroundCornerRounding))
+    //         .inflate(
+    //             conf.nodeHighlightOutlineInflation), // 10 is the corner radius
+    //     Paint()
+    //       ..color = conf.nodeHighlightStrokeColor.withAlpha((255 * hp).toInt())
+    //       ..strokeWidth = conf.nodeStrokeWidth
+    //       ..style = PaintingStyle.stroke,
+    //   );
+    // }
 
     //cursor
     if (whetherVisible(cursorState)) {
