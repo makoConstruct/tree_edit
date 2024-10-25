@@ -1380,7 +1380,7 @@ class TreeWidgetConf {
   final double parenSpan;
   final double nodeStrokeWidth;
   late final List<Color> nodeBackgroundColors;
-  final Color nodeStrokeColor;
+  final Color nodeHighlightStrokeColor;
   final double nodeBackgroundCornerRounding;
   final double defaultAnimationDuration;
 
@@ -1421,7 +1421,7 @@ class TreeWidgetConf {
     this.indent = 8,
     this.parenSpan = 13,
     this.spacing = 4,
-    this.nodeStrokeColor = const Color.fromARGB(255, 173, 173, 173),
+    this.nodeHighlightStrokeColor = const Color.fromARGB(255, 57, 57, 57),
     this.nearestHitRadius = 5,
     List<Color>? nodeBackgroundColors,
   }) {
@@ -1493,7 +1493,7 @@ class TreeWidget extends MultiChildRenderObjectWidget {
         // [todo] this is why changing treeconf dynamically doesn't work. I kinda think we should be listening, but I'm not sure how to update on a change of only some variables.
         conf: Provider.of(context, listen: false),
         treeDepth: depth,
-        selected: highlighted,
+        highlighted: highlighted,
         cursorState: cursorState,
         key: nodeStateKey,
         hasChild: children.length > 1);
@@ -1504,18 +1504,19 @@ class TreeWidget extends MultiChildRenderObjectWidget {
       BuildContext context, covariant RenderObject renderObject) {
     var ro = renderObject as TreeWidgetRenderObject;
     ro.hasChild = children.length > 1;
-    if (ro.treeDepth != depth ||
-            ro.selected != highlighted ||
-            ro.cursorState != cursorState
-        // don't call paint if the cursor animation is off
-        ) {
-      // ro.markNeedsPaint();
-      // this is crude, different animations will likely be needed for different changes
+    ro.treeDepth.approach(depth.toDouble());
+    var nh = highlighted ? 1 : 0;
+    if (ro.highlighted.endValue != nh) {
+      ro.highlighted.approach(highlighted ? 1 : 0);
+      if (highlighted) {
+        ro.highlightPulser.pulse();
+      }
+    }
+    if (ro.cursorState != cursorState) {
+      // I'm not sure how long these really take right now so just give it the default
       ro.animationBegins(fromMils(
           Provider.of<TreeWidgetConf>(context).defaultAnimationDuration));
     }
-    ro.treeDepth = depth;
-    ro.selected = highlighted;
     ro.setCursorState(cursorState);
     super.updateRenderObject(context, renderObject);
   }
@@ -1528,34 +1529,40 @@ class TreeWidgetRenderObject extends RenderBox
         SelfAnimatingRenderObject {
   final TreeWidgetConf conf;
   final GNKey? key;
-  int treeDepth;
   bool hasChild;
-  bool selected;
-  bool cursorBlinking = true;
   Time focusPulse = double.negativeInfinity;
-  bool highlighted = false;
+  // currently not using this
+  Easer highlighted;
   SmoothV2 span;
   SmoothV2 position;
+  Pulser highlightPulser;
   // sometimes needs to be terminated separately from the other animations
   int indefiniteAnimation = -1;
 
   /// tracks treeDepth
-  Easer treeDepthEaser;
+  Easer treeDepth;
 
   // null if cursor absent, true iff the cursor (currently denoted by selected) should be rendered after this widget or before. (After render happens when a cursor is pointing at the end of the treenode)
   NodeCursorState cursorState = NodeCursorState.none;
 
   TreeWidgetRenderObject(
       {required this.conf,
-      required this.treeDepth,
-      this.selected = false,
+      required int treeDepth,
+      required bool highlighted,
       this.key,
       required this.hasChild,
       required NodeCursorState cursorState})
-      : span = SmoothV2.unset(),
-        position = SmoothV2.unset(),
-        treeDepthEaser = Easer.unset() {
+      : span = SmoothV2.unset(duration: conf.defaultAnimationDuration),
+        position = SmoothV2.unset(duration: conf.defaultAnimationDuration),
+        treeDepth = Easer(treeDepth.toDouble()),
+        highlighted = Easer(highlighted ? 1 : 0),
+        highlightPulser = Pulser(duration: conf.defaultAnimationDuration) {
     setCursorState(cursorState);
+    registerEaser(this.highlighted);
+    registerEaser(highlightPulser);
+    registerEaser(span);
+    registerEaser(position);
+    registerEaser(this.treeDepth);
   }
 
   void setCursorState(NodeCursorState cursor) {
@@ -1573,6 +1580,16 @@ class TreeWidgetRenderObject extends RenderBox
   void paint(PaintingContext context, Offset offset) {
     var animatedDimensions = span.v();
 
+    var td = treeDepth.v();
+    var color = td == td.toInt()
+        ? conf.nodeBackgroundColors[td.toInt()]
+        : hslerp(
+            conf.nodeBackgroundColors[
+                td.floor() % conf.nodeBackgroundColors.length],
+            conf.nodeBackgroundColors[
+                (td.floor() + 1) % conf.nodeBackgroundColors.length],
+            td - td.floor());
+
     context.canvas.drawRRect(
       RRect.fromRectAndRadius(
           Rect.fromLTWH(offset.dx, offset.dy, animatedDimensions.dx,
@@ -1580,12 +1597,12 @@ class TreeWidgetRenderObject extends RenderBox
           Radius.circular(
               conf.nodeBackgroundCornerRounding)), // 10 is the corner radius
       Paint()
-        ..color = conf
-            .nodeBackgroundColors[treeDepth % conf.nodeBackgroundColors.length]
+        ..color = color
         ..style = PaintingStyle.fill,
     );
 
-    if (highlighted) {
+    var hp = highlightPulser.v();
+    if (hp != 0) {
       context.canvas.drawRRect(
         RRect.fromRectAndRadius(
                 Rect.fromLTWH(offset.dx, offset.dy, size.width, size.height),
@@ -1593,7 +1610,7 @@ class TreeWidgetRenderObject extends RenderBox
             .inflate(
                 conf.nodeHighlightOutlineInflation), // 10 is the corner radius
         Paint()
-          ..color = conf.nodeStrokeColor
+          ..color = conf.nodeHighlightStrokeColor.withAlpha((255 * hp).toInt())
           ..strokeWidth = conf.nodeStrokeWidth
           ..style = PaintingStyle.stroke,
       );
@@ -1636,9 +1653,6 @@ class TreeWidgetRenderObject extends RenderBox
           ..color = cursorColor
           ..style = PaintingStyle.fill,
       );
-      // if (cursorBlinking) {
-      //   markNeedsPaint();
-      // }
     }
 
     // just defaultPaint but using animatedOffset
@@ -1756,7 +1770,6 @@ class TreeWidgetRenderObject extends RenderBox
   @override
   set size(Size v) {
     super.size = v;
-    animationBegins(fromMils(conf.defaultAnimationDuration));
     span.approach(v.bottomRight(Offset.zero));
   }
 

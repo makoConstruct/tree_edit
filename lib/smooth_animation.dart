@@ -154,12 +154,48 @@ Duration maxDuration(Duration a, Duration b) {
   return a.compareTo(b) > 0 ? a : b;
 }
 
-class Easer {
+abstract class Animator extends ChangeNotifier {
+  // really I think this should communicate via endTime
+  double get duration;
+}
+
+const double _midpoint = 0.3;
+double defaultPulserFunction(double v) =>
+    v < _midpoint ? v / _midpoint : 1 - (v - _midpoint) / (1 - _midpoint);
+
+/// pulses to 1 and sags to 0. Is fairly graceful when interrupted, allowing pulses to overlap.
+class Pulser extends Animator {
+  @override
+  double duration;
+  List<double> pulseStarts = [];
+  double Function(double) pulseFunction;
+  Pulser({this.duration = 200, this.pulseFunction = defaultPulserFunction});
+  void pulse() {
+    pulseStarts.add(currentTime());
+    notifyListeners();
+  }
+
+  double v() {
+    double r = 0;
+    double ct = currentTime();
+    for (var s in pulseStarts) {
+      double tp = ct - s;
+      if (tp > 0 && tp < duration) {
+        r = max(r, pulseFunction(tp / duration));
+      }
+    }
+    return r;
+  }
+}
+
+class Easer extends Animator {
   double startValue;
   double endValue;
   double startTime;
   double startVelocity;
+  @override
   double duration;
+
   static const double defaultDuration = 200;
   Easer(double v)
       : startValue = v,
@@ -169,36 +205,36 @@ class Easer {
         startVelocity = 0.0;
 
   /// use this when you want the first approach to reach its destination instantly regardless of transitionDuration
-  Easer.unset()
+  Easer.unset({this.duration = defaultDuration})
       : startValue = double.nan,
         endValue = double.nan,
-        duration = defaultDuration,
         startTime = double.nan,
         startVelocity = double.nan;
 
   void approach(double v) {
-    if (startValue.isNaN) {
-      startValue = endValue = v;
-      startTime = double.negativeInfinity;
-      startVelocity = 0;
-      return;
+    if (v != endValue) {
+      if (startValue.isNaN) {
+        startValue = endValue = v;
+        startTime = double.negativeInfinity;
+        startVelocity = 0;
+        // it would be nice if we could tell listeners that the change has infinitesimal duration, but just telling them it's the same duration as ever isn't so bad. Might want to come back to this once you're doing variable durations as a function of the value delta.
+      } else {
+        var time = currentTime();
+        var result = easeValVel(
+          startValue,
+          endValue,
+          startTime,
+          startTime + duration,
+          time,
+          startVelocity,
+        );
+        startValue = result.$1;
+        startVelocity = result.$2;
+        startTime = time;
+        endValue = v;
+      }
+      notifyListeners();
     }
-    if (v == endValue) {
-      return;
-    }
-    var time = currentTime();
-    var result = easeValVel(
-      startValue,
-      endValue,
-      startTime,
-      startTime + duration,
-      time,
-      startVelocity,
-    );
-    startValue = result.$1;
-    startVelocity = result.$2;
-    startTime = time;
-    endValue = v;
   }
 
   double v() {
@@ -213,23 +249,29 @@ class Easer {
   }
 }
 
-class SmoothV2 {
+class SmoothV2 extends Animator {
   Easer dx, dy;
   set duration(double v) {
     dx.duration = v;
     dy.duration = v;
   }
 
+  @override
+  double get duration => dx.duration;
+
   SmoothV2(Offset initial, double transitionDuration)
       : dx = Easer(initial.dx),
         dy = Easer(initial.dy);
-  SmoothV2.unset()
-      : dx = Easer.unset(),
-        dy = Easer.unset();
+  SmoothV2.unset({double duration = Easer.defaultDuration})
+      : dx = Easer.unset(duration: duration),
+        dy = Easer.unset(duration: duration);
   Offset v() => Offset(dx.v(), dy.v());
   void approach(Offset v) {
-    dx.approach(v.dx);
-    dy.approach(v.dy);
+    if (dx.endValue != v.dx || dy.endValue != v.dy) {
+      dx.approach(v.dx);
+      dy.approach(v.dy);
+      notifyListeners();
+    }
   }
 }
 
@@ -315,6 +357,12 @@ mixin SelfAnimatingRenderObject on RenderObject {
         _animating = false;
       }
     }
+  }
+
+  void registerEaser(Animator easer) {
+    easer.addListener(() {
+      animationBegins(fromMils(easer.duration));
+    });
   }
 
   @override
