@@ -80,6 +80,11 @@ class GoUnaccess extends TreeViewIntent {
   const GoUnaccess();
 }
 
+@immutable
+class GoActivate extends TreeViewIntent {
+  const GoActivate();
+}
+
 /// keyboard scheme for doing everything with the left hand
 const Infos basicLeftHandKeyboardSchemeInfo = {
   SingleActivator(LogicalKeyboardKey.keyD, control: true): (
@@ -110,28 +115,28 @@ const Infos basicLeftHandKeyboardSchemeInfo = {
   ),
   SingleActivator(LogicalKeyboardKey.keyC, alt: true): (
     CopySelected(entireSegment: false),
-    "copy node"
+    "copy single node into magazine"
   ),
 
   SingleActivator(LogicalKeyboardKey.keyV, control: true): (
     Paste(entireSegment: true),
-    "copy from magazine"
+    "paste"
   ),
   SingleActivator(LogicalKeyboardKey.keyV, alt: true): (
     Paste(entireSegment: false),
-    "copy around"
+    "paste around"
   ),
   SingleActivator(LogicalKeyboardKey.keyV, shift: true): (
     Paste(entireSegment: true, deleteFromBuffer: true),
-    "place from magazine"
+    "paste, removing from magazine"
   ),
   SingleActivator(LogicalKeyboardKey.keyV, shift: true, control: true): (
     Paste(entireSegment: true, deleteFromBuffer: true),
-    "place from magazine"
+    "paste, removing from magazine"
   ),
   SingleActivator(LogicalKeyboardKey.keyV, shift: true, alt: true): (
     Paste(entireSegment: false, deleteFromBuffer: true),
-    "place around from mag"
+    "paste around, removing from magazine"
   ),
 
   SingleActivator(LogicalKeyboardKey.keyZ, control: true): (Undo(), "undo"),
@@ -177,6 +182,10 @@ const Infos basicLeftHandKeyboardSchemeInfo = {
   SingleActivator(LogicalKeyboardKey.keyA, alt: true): (
     GoUnaccess(),
     "exit current place"
+  ),
+  SingleActivator(LogicalKeyboardKey.keyA, control: true, shift: true): (
+    GoActivate(),
+    "activate this (accept/submit/run/save)"
   ),
 };
 

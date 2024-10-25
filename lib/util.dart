@@ -11,6 +11,9 @@ T snoop<T>(ReadonlySignal<T> v) => untracked(() => v.value);
 
 typedef Time = double;
 
+double mils(Duration d) => d.inMilliseconds.toDouble();
+Duration fromMils(double d) => Duration(milliseconds: d.toInt());
+
 Rect bounds(Offset offset, RenderObject? ro) =>
     (offset + ((ro as RenderBox).parentData as BoxParentData).offset) & ro.size;
 

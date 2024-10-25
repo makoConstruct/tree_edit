@@ -32,6 +32,7 @@ class MyApp extends StatelessWidget {
     var parentTheme = Theme.of(context);
     return MaterialApp(
       title: 'tree edit',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
           colorScheme: parentTheme.colorScheme
               .copyWith(surfaceDim: const Color.fromARGB(255, 230, 230, 230)),
@@ -127,7 +128,13 @@ enum NodeCursorState {
   before,
   after,
   inside,
+
+  /// in which case there's another cursor in the way
+  focused,
 }
+
+bool whetherVisible(NodeCursorState v) =>
+    !(v == NodeCursorState.none || v == NodeCursorState.focused);
 
 /// points to a position in the tree. Notably, doesn't just point at a tree node, because it's possible for it to point at the position at the end of a parent tree node, where there currently is no node.
 @immutable
@@ -587,7 +594,9 @@ class TreeViewState extends State<TreeView>
     bool cursorCaughtByDeletion = false;
     var tc = TreeCursor.addressInParent(snapshot.key as GNKey);
     TreeCursor newCursorIfCursorCaught = tc.prev() ??
-        tc.parentCursor()!; //should be non-null since you can't delete rootNode? (you can, but we'll fix that)
+        tc.parentCursor() ??
+        tc.next() ??
+        tc; //note, if tc.next() is null, that means tc was a null (ending) cursor, so tc is actually still valid
     var cp = snoop(cursorPlacement);
     void checkCursor(GNKey at) {
       if (!cursorCaughtByDeletion && cp != null) {
@@ -789,6 +798,10 @@ class TreeViewState extends State<TreeView>
             }),
             GoUnaccess: cb<GoUnaccess>((c) {
               throw UnimplementedError("GoUnaccess");
+            }),
+            GoActivate: cb<GoActivate>((c) {
+              var j = rootNode.currentState!.toJson();
+              File(snoop(fileName)).writeAsString(jsonEncode(j));
             }),
             CursorAscend: cb<CursorAscend>((c) {
               CursorPlacement? cp = snoop(cursorPlacement);
@@ -1054,6 +1067,7 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
   late final Signal<GNKey?> retainedHoverSignal;
   // how you get notified when you become the targeted node
   late final Signal<bool> targeted;
+  // this is downstream of the treeview one
   late final Signal<NodeCursorState> cursorState;
   late TextEditingController editorController;
   bool hasFocus = false;
@@ -1195,7 +1209,7 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
     TreeWidgetConf conf = Provider.of(context);
 
     // declining to do animation here in the normal way to see if I can get it to work with needspaint from paint
-    Animation<double> blinkAnimation = cursorState.value == NodeCursorState.none
+    Animation<double> blinkAnimation = whetherVisible(cursorState.value)
         ? const AlwaysStoppedAnimation(1)
         : Provider.of<BlinkAnimation>(context).v;
     // Animation<double> blinkAnimation = Provider.of<BlinkAnimation>(context).v;
@@ -1385,7 +1399,7 @@ class TreeWidgetConf {
     this.lineMax = 18,
     this.lengthMax = double.infinity,
     this.lengthMin = 16,
-    this.lineHeight = 16,
+    this.lineHeight = 18,
     // kind of want this to be the same as spacing though?
     this.spacingInLine = 6,
     this.insertBeforeZoneWhenAfterMin = 2,
@@ -1403,7 +1417,7 @@ class TreeWidgetConf {
     this.cursorSpan = 3.3,
     this.cursorHeight = 14,
     this.cursorSpanWhenInside = 7,
-    this.nodeBackgroundCornerRounding = 4.6,
+    this.nodeBackgroundCornerRounding = 9,
     this.indent = 8,
     this.parenSpan = 13,
     this.spacing = 4,
@@ -1415,9 +1429,12 @@ class TreeWidgetConf {
         gradient(const [
           (Color.fromARGB(255, 250, 250, 250), 3),
           (Color.fromARGB(255, 207, 207, 207), 2),
-          (Color.fromARGB(255, 218, 197, 177), 3),
-          (Color.fromARGB(255, 252, 228, 205), 3),
+          (Color.fromARGB(255, 223, 198, 174), 6),
         ]);
+    // gradient(const [
+    //   (Color.fromARGB(255, 250, 250, 250), 3),
+    //   (Color.fromARGB(255, 207, 207, 207), 2),
+    // ]);
   }
 }
 
@@ -1492,7 +1509,10 @@ class TreeWidget extends MultiChildRenderObjectWidget {
             ro.cursorState != cursorState
         // don't call paint if the cursor animation is off
         ) {
-      ro.markNeedsPaint();
+      // ro.markNeedsPaint();
+      // this is crude, different animations will likely be needed for different changes
+      ro.animationBegins(fromMils(
+          Provider.of<TreeWidgetConf>(context).defaultAnimationDuration));
     }
     ro.treeDepth = depth;
     ro.selected = highlighted;
@@ -1516,6 +1536,8 @@ class TreeWidgetRenderObject extends RenderBox
   bool highlighted = false;
   SmoothV2 span;
   SmoothV2 position;
+  // sometimes needs to be terminated separately from the other animations
+  int indefiniteAnimation = -1;
 
   /// tracks treeDepth
   Easer treeDepthEaser;
@@ -1538,11 +1560,12 @@ class TreeWidgetRenderObject extends RenderBox
 
   void setCursorState(NodeCursorState cursor) {
     cursorState = cursor;
-    if (cursor != NodeCursorState.none) {
-      indefiniteAnimationBegins();
+    if (whetherVisible(cursor)) {
+      var na = indefiniteAnimationBegins();
+      terminateAnimation(indefiniteAnimation);
+      indefiniteAnimation = na;
     } else {
-      // this isn't exactly correct, as it means you'll be able to cancel all animations by mousing over real fast. Actually. I think this will happen in practice and look really bad? Let's see.
-      terminateAnimation();
+      terminateAnimation(indefiniteAnimation);
     }
   }
 
@@ -1577,7 +1600,7 @@ class TreeWidgetRenderObject extends RenderBox
     }
 
     //cursor
-    if (cursorState != NodeCursorState.none) {
+    if (whetherVisible(cursorState)) {
       double blinku =
           (time % conf.cursorBlinkDuration) / conf.cursorBlinkDuration;
       var cursorColor = Color.lerp(conf.nodeBackgroundColors[0],
@@ -1733,6 +1756,7 @@ class TreeWidgetRenderObject extends RenderBox
   @override
   set size(Size v) {
     super.size = v;
+    animationBegins(fromMils(conf.defaultAnimationDuration));
     span.approach(v.bottomRight(Offset.zero));
   }
 

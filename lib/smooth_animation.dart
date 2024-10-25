@@ -7,10 +7,12 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:tree_edit/util.dart';
 
 // double currentTime() => DateTime.now().millisecondsSinceEpoch.toDouble();
 double currentTime() =>
     SchedulerBinding.instance.currentFrameTimeStamp.inMilliseconds.toDouble();
+Duration currentTimeDur() => SchedulerBinding.instance.currentFrameTimeStamp;
 
 double sq(double a) {
   return a * a;
@@ -248,6 +250,8 @@ mixin SelfAnimatingRenderObject on RenderObject {
   bool _animating = false;
   @protected
   Duration currentPaintTime = Duration.zero;
+  List<(int, Duration)> animationsOngoing = [];
+  int latestAnimationID = 0;
 
   /// preferable when you're about to do a bunch of lerps and unlerps and clamps with it (ie, always)
   @protected
@@ -267,31 +271,55 @@ mixin SelfAnimatingRenderObject on RenderObject {
     }
   }
 
-  void indefiniteAnimationBegins() {
-    animationBegins(Duration(microseconds: double.maxFinite.toInt()));
+  int indefiniteAnimationBegins() {
+    return animationBegins(Duration(microseconds: double.maxFinite.toInt()));
   }
 
-  void animationBegins(Duration duration) {
-    _deadline = maxDuration(
-        _deadline, SchedulerBinding.instance.currentFrameTimeStamp + duration);
+  /// returns animationID, which should be used for cancellation
+  int animationBegins(Duration duration) {
+    var tid = ++latestAnimationID;
+    animationsOngoing.add((tid, duration));
+    var ct = currentTimeDur();
+    _deadline = maxDuration(_deadline, ct + duration);
     if (!_animating) {
       _schedulerBinding = SchedulerBinding.instance
           .scheduleFrameCallback(_tick, rescheduling: false);
       _animating = true;
     }
+    // clear out old animation ids
+    animationsOngoing.removeWhere((a) => a.$2 < ct);
+    return tid;
   }
 
-  void terminateAnimation() {
+  void terminateAllAnimation() {
     if (_animating) {
+      animationsOngoing.clear();
       SchedulerBinding.instance.cancelFrameCallbackWithId(_schedulerBinding);
       _deadline = currentPaintTime;
       _animating = false;
     }
   }
 
+  void terminateAnimation(int id) {
+    if (_animating) {
+      var ai = animationsOngoing.indexWhere((e) => e.$1 == id);
+      if (ai < 0) {
+        return;
+      }
+      animationsOngoing.removeAt(ai);
+      Duration remainingMax =
+          animationsOngoing.fold(Duration.zero, (a, b) => maxDuration(a, b.$2));
+      if (remainingMax < currentTimeDur()) {
+        SchedulerBinding.instance.cancelFrameCallbackWithId(_schedulerBinding);
+        _deadline = remainingMax;
+        _animating = false;
+      }
+    }
+  }
+
   @override
   dispose() {
-    terminateAnimation();
+    terminateAllAnimation();
     super.dispose();
   }
 }
