@@ -185,7 +185,7 @@ const Infos basicLeftHandKeyboardSchemeInfo = {
   ),
   SingleActivator(LogicalKeyboardKey.keyA, control: true, shift: true): (
     GoActivate(),
-    "activate this (accept/submit/run/save)"
+    "commit/accept/submit/run/save this file"
   ),
 };
 

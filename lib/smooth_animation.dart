@@ -164,7 +164,7 @@ abstract class Animator extends ChangeNotifier {
   double get duration;
 }
 
-const double _midpoint = 0.3;
+const double _midpoint = 0.1;
 double defaultPulserFunction(double v) =>
     v < _midpoint ? v / _midpoint : 1 - (v - _midpoint) / (1 - _midpoint);
 

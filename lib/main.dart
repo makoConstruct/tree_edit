@@ -17,9 +17,29 @@ import 'package:tree_edit/keybindings.dart';
 import 'package:tree_edit/nearhit.dart';
 import 'package:tree_edit/smooth_animation.dart';
 import 'package:tree_edit/util.dart';
+import 'package:window_manager/window_manager.dart';
 // import 'package:super_editor/super_editor.dart';
 
-void main() {
+void makeWindowDaylightSized() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await windowManager.ensureInitialized();
+
+  // Set minimum window size
+  WindowOptions windowOptions = const WindowOptions(
+    size: Size(1600, 1200), // Initial window size
+    center: true, // Center the window on startup
+    titleBarStyle: TitleBarStyle.hidden,
+  );
+
+  await windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.show();
+    await windowManager.focus();
+  });
+}
+
+void main() async {
+  makeWindowDaylightSized();
+
   runApp(const MyApp());
 }
 
@@ -42,7 +62,7 @@ class MyApp extends StatelessWidget {
             fontSize: 17,
             fontWeight: FontWeight.bold,
           ))),
-      home: const BrowsingWindow(title: 'tree edit'),
+      home: BrowsingWindow(title: 'tree edit', treeConf: TreeWidgetConf()),
     );
   }
 }
@@ -68,12 +88,21 @@ abstract class TreeEdit {
 /// deleting a whole segment from the tree. Contrast with "DeleteSpill", which deletes just a node and spills its children into the parent.
 class TreeDelete extends TreeEdit {
   final TreeNode snapshot;
+  // is the insertion point for the undo, not the deletion point
   late final TreeCursor at;
   final bool deleteEntireSegment;
   TreeDelete({required this.snapshot, required this.deleteEntireSegment}) {
-    at = TreeCursor((snapshot.key as GNKey).currentState!.widget.parent!,
-            snapshot.key as GNKey)
-        .next()!;
+    var ds = (snapshot.key as GNKey).currentState!;
+    TreeCursor afterSnapshot() =>
+        TreeCursor(ds.widget.parent!, snapshot.key as GNKey).next()!;
+    if (deleteEntireSegment) {
+      at = afterSnapshot();
+    } else {
+      var before = snoop(ds.children).firstOrNull;
+      at = before != null
+          ? TreeCursor(ds.widget.parent!, before.key as GNKey)
+          : afterSnapshot();
+    }
   }
   @override
   void apply(TreeViewState ts) {
@@ -836,9 +865,13 @@ class TreeViewState extends State<TreeView>
                 } else {
                   TreeCursor? nextValue = cp.insertionCursor.nextFirmly();
                   if (nextValue != null) {
-                    cursorPlacement.value =
-                        CursorPlacement.forKeyboardCursor(nextValue);
-                    debug.log("${nextValue.before}", level: 3);
+                    var nv = CursorPlacement.forKeyboardCursor(nextValue);
+                    cursorPlacement.value = nv;
+                    // this doesn't work because you can't access currentFrameTimeStamp outside of the render phase. Why? Going to file an issue. Not sure what to do.
+                    // (nv.targetNode.currentContext?.findRenderObject()
+                    //         as TreeWidgetRenderObject?)
+                    //     ?.bumpPulse
+                    //     .pulse(const Offset(1, 0));
                   }
                 }
               }
@@ -1082,7 +1115,8 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
 
   Object toJson() {
     return {
-      "value": snoop(content),
+      // "value": snoop(content),
+      "value": editorController.text,
       "children": List.unmodifiable(
           snoop(children).map((v) => (v.key as GNKey).currentState!.toJson()))
     };
@@ -1193,25 +1227,18 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
     // const backCol = Color.fromRGBO(230, 230, 230, 1.0);
     TreeWidgetConf conf = Provider.of(context);
 
-    // declining to do animation here in the normal way to see if I can get it to work with needspaint from paint
-    Animation<double> blinkAnimation = whetherVisible(cursorState.value)
-        ? const AlwaysStoppedAnimation(1)
-        : Provider.of<BlinkAnimation>(context).v;
-    // Animation<double> blinkAnimation = Provider.of<BlinkAnimation>(context).v;
     return avoidNestingHell(
       [
-        (w) => AnimatedBuilder(
-            animation: blinkAnimation,
-            builder: (context, w) => TreeWidget(
-                depth: widget.depth,
-                nodeStateKey: widget.key as GNKey,
-                highlighted: targeted.value,
-                cursorState: cursorState.value,
-                head: ConstrainedBox(
-                    constraints: BoxConstraints(minWidth: conf.lengthMin),
-                    child: w!),
-                children: children.value),
-            child: w),
+        // the first widget must always be a TreeWidget, so that the treewidget renderobjects can get right at the treerenderobject of their children
+        (w) => TreeWidget(
+            depth: widget.depth,
+            nodeStateKey: widget.key as GNKey,
+            highlighted: targeted.value,
+            cursorState: cursorState.value,
+            head: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: conf.lengthMin),
+                child: w),
+            children: children.value),
         (w) => Shortcuts(
                 shortcuts: const {
                   SingleActivator(LogicalKeyboardKey.escape): Unfocus(),
@@ -1224,6 +1251,7 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
                   Unfocus: CallbackAction<Unfocus>(
                       onInvoke: (_) => editFocusNode.unfocus())
                 }, child: w)),
+        (w) => Padding(padding: const EdgeInsets.only(left: 5), child: w),
         (w) => NearhitRecipient(
             onPointerDown: (at) {
               editFocusNode.requestFocus();
@@ -1380,6 +1408,7 @@ class TreeWidgetConf {
   /// interpolates between cursorColor towards background this far on the cursor blink lows
   final double cursorColorLowFade;
   final double cursorSpanWhenInside;
+
   TreeWidgetConf({
     this.lineMax = 18,
     this.lengthMax = double.infinity,
@@ -1518,9 +1547,10 @@ class TreeWidgetRenderObject extends RenderBox
   Time focusPulse = double.negativeInfinity;
   // currently not using this
   Easer highlighted;
-  SmoothV2 span;
+  SmoothV2 animatedSpan;
   SmoothV2 position;
   Pulser highlightPulser;
+  BumpPulse bumpPulse;
   // sometimes needs to be terminated separately from the other animations
   int indefiniteAnimation = -1;
 
@@ -1537,17 +1567,19 @@ class TreeWidgetRenderObject extends RenderBox
       this.key,
       required this.hasChild,
       required NodeCursorState cursorState})
-      : span = SmoothV2.unset(duration: conf.defaultAnimationDuration),
+      : animatedSpan = SmoothV2.unset(duration: conf.defaultAnimationDuration),
         position = SmoothV2.unset(duration: conf.defaultAnimationDuration),
         treeDepth = Easer(treeDepth.toDouble()),
         highlighted = Easer(highlighted ? 1 : 0),
-        highlightPulser = Pulser(duration: 190) {
+        highlightPulser = Pulser(duration: 190),
+        bumpPulse = BumpPulse(duration: 200) {
     setCursorState(cursorState);
     registerEaser(this.highlighted);
     registerEaser(highlightPulser);
-    registerEaser(span);
+    registerEaser(animatedSpan);
     registerEaser(position);
     registerEaser(this.treeDepth);
+    registerEaser(bumpPulse);
   }
 
   void setCursorState(NodeCursorState cursor) {
@@ -1563,11 +1595,11 @@ class TreeWidgetRenderObject extends RenderBox
 
   @override
   void paint(PaintingContext context, Offset offset) {
-    var animatedDimensions = span.v();
+    final animatedDimensions = animatedSpan.v();
 
-    var td = treeDepth.v();
-    int nl = conf.nodeBackgroundColors.length;
-    var color = td == td.toInt()
+    final td = treeDepth.v();
+    final int nl = conf.nodeBackgroundColors.length;
+    final color = td == td.toInt()
         ? conf.nodeBackgroundColors[td.toInt() % nl]
         : hslerp(conf.nodeBackgroundColors[td.floor() % nl],
             conf.nodeBackgroundColors[(td.floor() + 1) % nl], td - td.floor());
@@ -1585,15 +1617,20 @@ class TreeWidgetRenderObject extends RenderBox
             ? lighten(v, -amount)
             : lighten(v, amount);
 
+    final isMultiline = parentData is TreeWidgetParentData
+        ? (parentData as TreeWidgetParentData).multiline
+        : true;
+    final o = offset + bumpPulse.v();
+
     context.canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(offset.dx, offset.dy, animatedDimensions.dx,
-              animatedDimensions.dy),
+          Rect.fromLTWH(
+              o.dx, o.dy, animatedDimensions.dx, animatedDimensions.dy),
           Radius.circular(
               conf.nodeBackgroundCornerRounding)), // 10 is the corner radius
       Paint()
-        ..color =
-            lightenOrDimDependingOnBrightness(color, highlightPulser.v() * 0.05)
+        ..color = lightenOrDimDependingOnBrightness(
+            color, highlightPulser.v() * (isMultiline ? 0.05 : 0.085))
         ..style = PaintingStyle.fill,
     );
 
@@ -1671,7 +1708,23 @@ class TreeWidgetRenderObject extends RenderBox
 
   @override
   void performLayout() {
-    // [todo] cache the constraints, don't do the layout again if they haven't changed?
+    var pd = parentData;
+    if (pd is TreeWidgetParentData) {
+      computeLayout(pd.doingInlineLayoutApproximation, false);
+    } else {
+      //then you're the root treenode and you should initiate a wide layout to prepare widths for the real one
+      computeLayout(true, true);
+      computeLayout(false, true);
+    }
+  }
+
+  // when doingInlineLayoutApproximation, it's laying out as if it has infinite space. Those dimensions can be computed quickly and without any quadratic blowup. They're then used to compute the real dimensions without quadratic blowup, which was happening otherwise.
+  // it's not formally doing layout iff doingInlineLayoutApproximation is true. It needs to be able to run in this distinct mode so that we can do a layout pass where we just compute how wide everything would be if it were allowed to be as wide as it wanted, which we then use in the real layout. Without this, it freezes for a moment when nesting more than say 8 levels deep.
+  void computeLayout(bool doingInlineLayoutApproximation, bool isRootTreeNode) {
+    bool rootNodeUsingFakeConstraints =
+        isRootTreeNode && doingInlineLayoutApproximation;
+    BoxConstraints constraintser =
+        rootNodeUsingFakeConstraints ? const BoxConstraints() : constraints;
 
     double width = conf.parenSpan * 2;
     double height = conf.lineHeight;
@@ -1684,11 +1737,22 @@ class TreeWidgetRenderObject extends RenderBox
     bool hasLaidSomethingInThisLine = false;
     // if we're squished for space, get rid of parenspan (the inner element must be allowed to be lengthMin too). Also no need for a paren if there's no children, the paren is just to allow  mouse-selecting inserting at the end.
     double parenSpanToBeUsed = hasChild
-        ? min(conf.parenSpan, constraints.maxWidth - conf.lengthMin)
+        ? min(conf.parenSpan, constraintser.maxWidth - conf.lengthMin)
         : 0;
 
     Offset curOffset = Offset.zero;
     int lineNumber = 0;
+
+    void layout(RenderBox c) {
+      (c.parentData as TreeWidgetParentData).doingInlineLayoutApproximation =
+          doingInlineLayoutApproximation;
+      c.layout(
+          BoxConstraints(
+              maxWidth:
+                  constraintser.maxWidth - curOffset.dx - parenSpanToBeUsed),
+          parentUsesSize: true);
+    }
+
     while (child != null) {
       final TreeWidgetParentData childParentData =
           child.parentData! as TreeWidgetParentData;
@@ -1699,75 +1763,68 @@ class TreeWidgetRenderObject extends RenderBox
         height = max(height, curOffset.dy + child.size.height);
       }
 
-      void nextLine(double lineHeight) {
+      void nextLine(double thisLineHeight) {
         hasLaidSomethingInThisLine = false;
         lineNumber += 1;
         curOffset = Offset(
             // don't indent if there's not enough space
             min(conf.indent,
-                constraints.maxWidth - conf.lengthMin - parenSpanToBeUsed),
-            curOffset.dy + lineHeight + conf.spacing);
+                constraintser.maxWidth - conf.lengthMin - parenSpanToBeUsed),
+            curOffset.dy + thisLineHeight + conf.spacing);
       }
 
-      // attempt to lay out inline
-      // [todo]
-      // if(s is TreeWidgetRenderObject){
-      //   //do an optimized version of layout that doesn't do vertical sizing if it turns out to be longer vertically than maxLine, just returning null
-      // } else {}
+      bool overWide() =>
+          child!.size.width >
+          constraintser.maxWidth - curOffset.dx - parenSpanToBeUsed;
+      bool overTall() => child!.size.height > conf.lineMax;
+
+      // the gnarliest logic is mostly just here xD
+      if (doingInlineLayoutApproximation) {
+        layout(child);
+      }
+      if (hasLaidSomethingInThisLine && (overTall() || overWide())) {
+        nextLine(conf.lineHeight);
+        // if it's infinite (ie, when doingInlineLayoutApproximation), there's no need to do layout again, it will end up with the same dimensions
+        if (constraintser.maxWidth.isFinite) {
+          layout(child);
+        }
+      } else if (overWide()) {
+        layout(child);
+      }
+
+      //finalize offset here
       childParentData.offset = curOffset;
       childParentData.lineNumber = lineNumber;
-      child.layout(
-          BoxConstraints.loose(Size(
-              constraints.maxWidth - curOffset.dx - parenSpanToBeUsed,
-              double.infinity)),
-          parentUsesSize: true);
-
-      // we don't wrap over-long items, so they'd get a new line
-      bool overWide = child.size.width > constraints.maxWidth - curOffset.dx;
-      // we give tall items their own line (for some reason this looks nicer than having jagged lines with voids in them)
-      bool isOverTall() => child!.size.height > conf.lineMax;
-      bool overTall = isOverTall();
-      if (hasLaidSomethingInThisLine && (overTall || overWide)) {
-        //we're gonna need to go down at least one line and lay out again
-        //gets its own line, and lay it out again
-        nextLine(conf.lineHeight);
-        childParentData.offset = curOffset;
-        childParentData.lineNumber = lineNumber;
-        child.layout(
-            BoxConstraints.loose(Size(
-                constraints.maxWidth - curOffset.dx - parenSpanToBeUsed,
-                double.infinity)),
-            parentUsesSize: true);
-        overTall = isOverTall();
-      }
-      //finalize offset here
+      //this is problematic, it's the reason we're getting a swoop instead of things just appearing in the place they're put, it often gets run twice so the first setting isn't correct
       childParentData.animatedOffsetEaser.approach(curOffset);
-      childParentData.multiline = overTall;
+      childParentData.multiline = overTall();
       adjustOwnSpan();
-      if (overTall) {
+      if (overTall()) {
         //we don't put anything else in tall item lines
         nextLine(child.size.height);
       } else {
         var nextdx = curOffset.dx + child.size.width + conf.spacingInLine;
-        var nextspan = constraints.maxWidth - parenSpanToBeUsed - nextdx;
-        if (nextspan < conf.lengthMin) {
-          nextLine(conf.lineHeight);
-        } else {
+        var nextspan = constraintser.maxWidth - parenSpanToBeUsed - nextdx;
+        if (nextspan >= conf.lengthMin) {
           curOffset = Offset(nextdx, curOffset.dy);
           hasLaidSomethingInThisLine = true;
+        } else {
+          nextLine(conf.lineHeight);
         }
       }
 
       child = childParentData.nextSibling;
     }
-
-    size = constraints.constrain(Size(width, height));
+    // the root treenode doesn't need to set its constraints on the debugInlinePass, as it will certainly be called again, and because it it doesn't need to communicate its wide size up during the doingInline phase, and because defying its constraints freaks everything out.
+    if (!rootNodeUsingFakeConstraints) {
+      size = constraintser.constrain(Size(width, height));
+    }
   }
 
   @override
   set size(Size v) {
     super.size = v;
-    span.approach(v.bottomRight(Offset.zero));
+    animatedSpan.approach(v.bottomRight(Offset.zero));
   }
 
   @override
@@ -1782,6 +1839,7 @@ class TreeWidgetParentData extends ContainerBoxParentData<RenderBox> {
   double animatedOffsetCachedTime = double.negativeInfinity;
   Offset animatedOffsetCached = Offset.zero;
   int lineNumber = 0;
+  bool doingInlineLayoutApproximation = false;
   Offset get animatedOffset {
     var ct = currentTime();
     if (ct > animatedOffsetCachedTime) {
@@ -1893,7 +1951,8 @@ List<Widget> evenPadding(
 }
 
 class BrowsingWindow extends StatefulWidget {
-  const BrowsingWindow({super.key, required this.title});
+  final TreeWidgetConf? treeConf;
+  const BrowsingWindow({super.key, required this.title, this.treeConf});
   final String title;
   @override
   State<BrowsingWindow> createState() => _BrowsingWindowState();
@@ -1911,7 +1970,9 @@ class _BrowsingWindowState extends State<BrowsingWindow> {
           mainAxisAlignment: MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Expanded(child: TreeView('tree.json')),
+            Expanded(
+                child: SingleChildScrollView(
+                    child: TreeView('tree.json', conf: widget.treeConf))),
             controls(context)
           ],
         )
