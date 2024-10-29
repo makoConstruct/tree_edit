@@ -328,7 +328,7 @@ class TreeViewState extends State<TreeView>
   late Computed<Future<Widget>> loadedFromFile;
   // these two are used to alter the behavior of left and right events when descending
   int nextJumpSpan = 0;
-  bool downHeldFromDescend = false;
+  LogicalKeyboardKey? downHeldFromDescend;
   // [todo] persist this
   late final Signal<List<Widget>> copyBuffer;
   FocusScopeNode focusScopeNode = FocusScopeNode(debugLabel: "TreeView");
@@ -651,8 +651,8 @@ class TreeViewState extends State<TreeView>
           skipTraversal: true,
           onKeyEvent: (node, event) {
             if (event is KeyUpEvent &&
-                (event.logicalKey == LogicalKeyboardKey.arrowDown)) {
-              downHeldFromDescend = false;
+                (event.logicalKey == downHeldFromDescend)) {
+              downHeldFromDescend = null;
               nextJumpSpan = 0;
             }
             return KeyEventResult.ignored;
@@ -778,26 +778,29 @@ class TreeViewState extends State<TreeView>
                       CursorPlacement.forKeyboardCursor(nextValue);
                 }
               }
+              bump(snoop(cursorPlacement)?.targetNode, const Offset(-1, 0));
               clearEditingFocus();
             }),
             CursorDescend: cb<CursorDescend>((c) {
               CursorPlacement? cp = snoop(cursorPlacement);
               if (cp != null) {
-                downHeldFromDescend = true;
-                nextJumpSpan =
-                    snoop(cp.targetNode.currentState!.children).length;
+                downHeldFromDescend = c.holding;
+                // it used to allow going to the end but I decided I wanted it to focus on navigation
+                nextJumpSpan = max(
+                    0, snoop(cp.targetNode.currentState!.children).length - 1);
                 TreeCursor? nextValue = cp.insertionCursor.firstChild();
                 if (nextValue != null) {
                   cursorPlacement.value =
                       CursorPlacement.forKeyboardCursor(nextValue);
                 }
               }
+              bump(snoop(cursorPlacement)?.targetNode, const Offset(1, 0));
               clearEditingFocus();
             }),
             CursorRight: cb<CursorRight>((c) {
               CursorPlacement? cp = snoop(cursorPlacement);
               if (cp != null) {
-                if (downHeldFromDescend) {
+                if (downHeldFromDescend != null) {
                   cursorPlacement.value = CursorPlacement.forKeyboardCursor(
                       cp.insertionCursor.moveOverBy(nextJumpSpan));
                   nextJumpSpan = max((nextJumpSpan / 2).floor(), 1);
@@ -815,7 +818,7 @@ class TreeViewState extends State<TreeView>
             CursorLeft: cb<CursorLeft>((c) {
               CursorPlacement? cp = snoop(cursorPlacement);
               if (cp != null) {
-                if (downHeldFromDescend) {
+                if (downHeldFromDescend != null) {
                   cursorPlacement.value = CursorPlacement.forKeyboardCursor(
                       cp.insertionCursor.moveOverBy(-nextJumpSpan));
                   nextJumpSpan = max((nextJumpSpan / 2).floor(), 1);
@@ -1348,6 +1351,7 @@ class TreeWidgetConf {
 
   final double cursorSpan;
   final double cursorHeight;
+  final bool allowInlineInFirstRow;
   final Color cursorColor;
   final int cursorBlinkDuration;
 
@@ -1371,6 +1375,7 @@ class TreeWidgetConf {
     this.insertBeforeZoneWhenBeforeRatio = 0.3,
     this.insertBeforeZoneWhenBeforeMax = 7,
     this.nodeStrokeWidth = 1.3,
+    this.allowInlineInFirstRow = true,
     this.defaultAnimationDuration = 200,
     this.cursorColorLowFade = 0.6,
     this.cursorBlinkDuration = 1600,
@@ -1396,7 +1401,7 @@ class TreeWidgetConf {
         // ]);
         gradient(const [
           (Color.fromARGB(255, 250, 250, 250), 2),
-          (Color.fromARGB(255, 216, 216, 216), 3),
+          (Color.fromARGB(255, 216, 216, 216), 2),
         ]);
   }
 }

@@ -207,13 +207,14 @@ class CursorAscend extends TreeViewIntent {
 }
 
 class CursorDescend extends TreeViewIntent {
-  const CursorDescend();
+  final LogicalKeyboardKey? holding;
+  const CursorDescend({this.holding});
 }
 
 /// why define these separately? No reason not to. Well, it's possible that one day we'll want the extra keybindings in mouse mode to do something different, for full time keyboarders/gazers?
 const Infos otherKeyboardControlInfo = {
   SingleActivator(LogicalKeyboardKey.arrowDown, alt: true): (
-    CursorDescend(),
+    CursorDescend(holding: LogicalKeyboardKey.arrowDown),
     "cursor leafward"
   ),
   SingleActivator(LogicalKeyboardKey.arrowUp, alt: true): (
@@ -225,6 +226,22 @@ const Infos otherKeyboardControlInfo = {
     "cursor to next peer"
   ),
   SingleActivator(LogicalKeyboardKey.arrowLeft, alt: true): (
+    CursorLeft(),
+    "cursor to previous peer"
+  ),
+  SingleActivator(LogicalKeyboardKey.keyJ, alt: true): (
+    CursorDescend(holding: LogicalKeyboardKey.keyJ),
+    "cursor leafward"
+  ),
+  SingleActivator(LogicalKeyboardKey.keyK, alt: true): (
+    CursorAscend(),
+    "cursor rootward"
+  ),
+  SingleActivator(LogicalKeyboardKey.keyL, alt: true): (
+    CursorRight(),
+    "cursor to next peer"
+  ),
+  SingleActivator(LogicalKeyboardKey.keyH, alt: true): (
     CursorLeft(),
     "cursor to previous peer"
   ),
