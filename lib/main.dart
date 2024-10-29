@@ -642,6 +642,10 @@ class TreeViewState extends State<TreeView>
           .pulse(angle);
     }
 
+    clearEditingFocus() {
+      snoop(editedNode)?.currentState?.editFocusNode.unfocus();
+    }
+
     return avoidNestingHell(end: coreWidget, [
       (r) => Focus(
           skipTraversal: true,
@@ -774,6 +778,7 @@ class TreeViewState extends State<TreeView>
                       CursorPlacement.forKeyboardCursor(nextValue);
                 }
               }
+              clearEditingFocus();
             }),
             CursorDescend: cb<CursorDescend>((c) {
               CursorPlacement? cp = snoop(cursorPlacement);
@@ -787,6 +792,7 @@ class TreeViewState extends State<TreeView>
                       CursorPlacement.forKeyboardCursor(nextValue);
                 }
               }
+              clearEditingFocus();
             }),
             CursorRight: cb<CursorRight>((c) {
               CursorPlacement? cp = snoop(cursorPlacement);
@@ -804,6 +810,7 @@ class TreeViewState extends State<TreeView>
                 }
               }
               bump(snoop(cursorPlacement)?.targetNode, const Offset(1, 0));
+              clearEditingFocus();
             }),
             CursorLeft: cb<CursorLeft>((c) {
               CursorPlacement? cp = snoop(cursorPlacement);
@@ -821,6 +828,7 @@ class TreeViewState extends State<TreeView>
                 }
               }
               bump(snoop(cursorPlacement)?.targetNode, const Offset(-1, 0));
+              clearEditingFocus();
             }),
           }, child: r)),
       (r) => FocusScope(
@@ -1513,7 +1521,7 @@ class TreeWidgetRenderObject extends RenderBox
         treeDepth = Easer(treeDepth.toDouble()),
         highlighted = Easer(highlighted ? 1 : 0),
         highlightPulser = Pulser(duration: 240),
-        bumpPulse = BumpPulse(duration: 600) {
+        bumpPulse = BumpPulse(duration: 300) {
     setCursorState(cursorState);
     registerEaser(this.highlighted);
     registerEaser(highlightPulser);
@@ -1537,6 +1545,7 @@ class TreeWidgetRenderObject extends RenderBox
   @override
   void paint(PaintingContext context, Offset offset) {
     final animatedDimensions = animatedSpan.v();
+    offset = offset + bumpPulse.v() * 2;
 
     final td = treeDepth.v();
     final int nl = conf.nodeBackgroundColors.length;
@@ -1561,7 +1570,6 @@ class TreeWidgetRenderObject extends RenderBox
     final isMultiline = parentData is TreeWidgetParentData
         ? (parentData as TreeWidgetParentData).multiline
         : true;
-    offset = offset + bumpPulse.v() * 2;
 
     context.canvas.drawRRect(
       RRect.fromRectAndRadius(
