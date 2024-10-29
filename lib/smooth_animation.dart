@@ -10,9 +10,10 @@ import 'package:flutter/scheduler.dart';
 import 'package:tree_edit/util.dart';
 
 // double currentTime() => DateTime.now().millisecondsSinceEpoch.toDouble();
-double currentTime() =>
-    SchedulerBinding.instance.currentFrameTimeStamp.inMilliseconds.toDouble();
-Duration currentTimeDur() => SchedulerBinding.instance.currentFrameTimeStamp;
+double currentTime() => currentTimeDur().inMilliseconds.toDouble();
+// this is supposedly dangerous "returns an arbitrary value", but we have no choice. https://github.com/flutter/flutter/issues/157648
+Duration currentTimeDur() =>
+    SchedulerBinding.instance.currentSystemFrameTimeStamp;
 
 double sq(double a) {
   return a * a;

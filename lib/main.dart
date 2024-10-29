@@ -511,81 +511,8 @@ class TreeViewState extends State<TreeView>
               targetNode: ro.key as GNKey,
               hostedHow: NodeCursorState.inside,
             );
-
-      // TreeWidgetRenderObject? curChild =
-      //     fcpd.nextSibling as TreeWidgetRenderObject;
-
-      // bool hasFoundLine = false;
-      // while (curChild != null) {
-      //   //special case for first child
-      //   TreeWidgetParentData parentData =
-      //       curChild.parentData as TreeWidgetParentData;
-      //   var nextSibling = parentData.nextSibling as TreeWidgetRenderObject?;
-      //   Offset curOffset = o + parentData.offset;
-      //   //ensure that we're (still) in the right line of subwidgets
-      //   bool isLowEnough = p.dy >= curOffset.dy - conf.spacing / 2;
-
-      //   bool isInLine = isLowEnough &&
-      //       p.dy < curOffset.dy + curChild.size.height + conf.spacing / 2;
-      //   if (isInLine) {
-      //     hasFoundLine = true;
-      //     if (p.dx < curOffset.dx + curChild.size.width) {
-      //       double insertZoneMargin = max(
-      //           conf.minInsertBeforeZone,
-      //           min(conf.insertBeforeZoneMax,
-      //               conf.insertBeforeZoneRatio * curChild.size.width));
-
-      //       if (p.dx < curOffset.dx + insertZoneMargin) {
-      //         // then insert before (this also covers the case where it's just between the end of the last and before the end of the insertBeforeZone)
-      //         return CursorPlacement(
-      //             insertionCursor: TreeCursor(ro.key as GNKey, curChild.key!),
-      //             targetNode: curChild.key!,
-      //             hostedHow: NodeCursorState.before);
-      //       } else if (p.dx >
-      //           curOffset.dx + curChild.size.width - insertZoneMargin) {
-      //         // then insert after
-      //         return CursorPlacement(
-      //             insertionCursor:
-      //                 TreeCursor(ro.key as GNKey, nextSibling?.key!),
-      //             targetNode: curChild.key!,
-      //             hostedHow: NodeCursorState.after);
-      //       } else {
-      //         return descend(ro.key!, curOffset, curChild);
-      //       }
-      //     }
-      //   } else {
-      //     if (hasFoundLine) {
-      //       //then we've left a line without finding anything p was in, so p wont be in anything here
-      //       break;
-      //     }
-      //   }
-      //   if (nextSibling == null) {
-      //     //end of the line
-      //     //insert into the end of the line
-      //     return CursorPlacement(
-      //         insertionCursor: TreeCursor(ro.key!,
-      //             (parentData.nextSibling as TreeWidgetRenderObject?)?.key),
-      //         targetNode: curChild.key!,
-      //         hostedHow: NodeCursorState.after);
-      //   }
-      //   curChild = nextSibling;
-      // }
-      // throw AssertionError(
-      //     "*end of the line* code should have run before reaching this point in `cursorPlacementFor`");
     }
 
-    //the rootnode can't be hit, so we don't call descend on it
-    // var rootc = snoop(rootNode.currentState!.children);
-    // if (rootc.isEmpty) {
-    //   return TreeCursor(rootNode, null);
-    // }
-    // for (var tn in rootc) {
-    //   var cro = (tn.key as GNKey).currentContext!.findRenderObject() as TreeWidgetRenderObject;
-    //   descend(rootNode, (cro.parentData as TreeWidgetParentData).offset,
-    //       cro);
-    // }
-
-    // [todo]: bug: offset.zero is wrong here. How are you getting p? That might remind you how to get the right offset.
     var roo =
         rootNode.currentContext!.findRenderObject() as TreeWidgetRenderObject;
     return descend(
@@ -708,6 +635,12 @@ class TreeViewState extends State<TreeView>
           callback(i);
           return null;
         });
+
+    bump(GNKey? v, Offset angle) {
+      (v?.currentContext?.findRenderObject() as TreeWidgetRenderObject?)
+          ?.bumpPulse
+          .pulse(angle);
+    }
 
     return avoidNestingHell(end: coreWidget, [
       (r) => Focus(
@@ -867,14 +800,10 @@ class TreeViewState extends State<TreeView>
                   if (nextValue != null) {
                     var nv = CursorPlacement.forKeyboardCursor(nextValue);
                     cursorPlacement.value = nv;
-                    // this doesn't work because you can't access currentFrameTimeStamp outside of the render phase. Why? Going to file an issue. Not sure what to do.
-                    // (nv.targetNode.currentContext?.findRenderObject()
-                    //         as TreeWidgetRenderObject?)
-                    //     ?.bumpPulse
-                    //     .pulse(const Offset(1, 0));
                   }
                 }
               }
+              bump(snoop(cursorPlacement)?.targetNode, const Offset(1, 0));
             }),
             CursorLeft: cb<CursorLeft>((c) {
               CursorPlacement? cp = snoop(cursorPlacement);
@@ -891,6 +820,7 @@ class TreeViewState extends State<TreeView>
                   }
                 }
               }
+              bump(snoop(cursorPlacement)?.targetNode, const Offset(-1, 0));
             }),
           }, child: r)),
       (r) => FocusScope(
@@ -915,19 +845,6 @@ class TreeViewState extends State<TreeView>
     targetNode = Computed(() => cursorPlacement.value?.targetNode,
         debugLabel: "targetNode");
     toDispose.add(targetNode.dispose);
-    //these two guarantee both that editedNode and selectedNode peek() always have a value, and that targetNode is whichever of the two most recently changed, and that if either becomes null, targetNode will revert to the other
-    // toDispose.add(effect(() {
-    //   targetNode.value = editedNode.value ?? snoop(selectedNode);
-    // }));
-    // toDispose.add(effect(() {
-    //   targetNode.value = selectedNode.value ?? snoop(editedNode);
-    // }));
-    // toDispose.add(effect(() {
-    //   var fn = hoveredNode.value;
-    //   if (fn != null) {
-    //     cursorPosition.value = TreeCursor.addressInParent(fn);
-    //   }
-    // }));
 
     toDispose.add(effect(() {
       //notify subject when they're being selected
@@ -988,38 +905,38 @@ class TreeViewState extends State<TreeView>
   @override
   Widget build(BuildContext context) {
     var loadingMessage = const Text('loading');
-    Widget result = StreamBuilder(
-        stream: loadedFromFile.toStream(),
-        builder: (context, sigst) {
-          if (sigst.hasData) {
-            return FutureBuilder(
-              future: sigst.data!,
-              builder: (context, snapshot) {
-                if (snapshot.hasData) {
-                  rebuildCount += 1;
-                  debug.log(
-                      "This is the ${rebuildCount}th time TreeView built. It's not reparsing json each time though, so it seems benign, but I'd still like to know why.",
-                      level: 2);
-                  return snapshot.data!;
-                } else if (snapshot.hasError) {
-                  return Text('error: ${snapshot.error.toString()}');
-                } else {
-                  return loadingMessage;
-                }
-              },
-            );
-          } else {
-            debug.log("why is there a nonevent in this damned stream");
-            return loadingMessage;
-          }
-        });
-    result = MultiProvider(providers: [
-      Provider<TreeWidgetConf>(create: (c) => widget.conf),
-      Provider<TreeViewState>(create: (c) => this),
-      Provider<BlinkAnimation>(
-          create: (c) => BlinkAnimation(blinkAnimation.view)),
-    ], child: result);
-    return result;
+    return MultiProvider(
+        providers: [
+          Provider<TreeWidgetConf>(create: (c) => widget.conf),
+          Provider<TreeViewState>(create: (c) => this),
+          Provider<BlinkAnimation>(
+              create: (c) => BlinkAnimation(blinkAnimation.view)),
+        ],
+        child: StreamBuilder(
+            stream: loadedFromFile.toStream(),
+            builder: (context, sigst) {
+              if (sigst.hasData) {
+                return FutureBuilder(
+                  future: sigst.data!,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasData) {
+                      rebuildCount += 1;
+                      debug.log(
+                          "This is the ${rebuildCount}th time TreeView built. It's not reparsing json each time though, so it seems benign, but I'd still like to know why.",
+                          level: 2);
+                      return snapshot.data!;
+                    } else if (snapshot.hasError) {
+                      return Text('error: ${snapshot.error.toString()}');
+                    } else {
+                      return loadingMessage;
+                    }
+                  },
+                );
+              } else {
+                debug.log("why is there a nonevent in this damned stream");
+                return loadingMessage;
+              }
+            }));
   }
 }
 
@@ -1095,14 +1012,12 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
   late final Signal<String> content;
   late final Signal<List<TreeNode>> children;
   late final FocusNode editFocusNode;
-  // these are retained because we need to check on deletion whether they're pointed at us
-  late final Signal<GNKey?> retainedEditingNodeSignal;
-  late final Signal<GNKey?> retainedHoverSignal;
   // how you get notified when you become the targeted node
   late final Signal<bool> targeted;
   // this is downstream of the treeview one
   late final Signal<NodeCursorState> cursorState;
   late TextEditingController editorController;
+  TreeViewState? treeView;
   bool hasFocus = false;
   late final Signal<bool> beingEdited;
   List<void Function()> toDispose = [];
@@ -1136,27 +1051,33 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
   }
 
   @override
+  didChangeDependencies() {
+    super.didChangeDependencies();
+    treeView = Provider.of(context);
+  }
+
+  @override
+  activate() {
+    super.activate();
+  }
+
+  @override
   initState() {
     super.initState();
     beingEdited = this.createSignal(widget.initiallyEdited,
         debugLabel: "TreeNode edited node");
-    TreeViewState treeView = Provider.of(context, listen: false);
-    //retained to make sure we can unselect ourselves when we're deleted (we don't retain treeView because retaining states is bad)
-    retainedHoverSignal = treeView.hoveredNode;
-    retainedEditingNodeSignal = treeView.editedNode;
-    toDispose.add(() {
-      if (snoop(retainedHoverSignal) == widget.key) {
-        retainedHoverSignal.value = null;
-      }
-    });
+    //the parent of all treeNodes. Fine to retain a reference to this because we'll never outlive it for very long and because our functionality is so tightly coupled with its.
+
     toDispose.add(() {
       // tombstone: quiet leaver: There's a bug (?) ( https://github.com/flutter/flutter/issues/156285 ) with Focus where it doesn't unfocus when disposed, so we need to make sure that's called here:
       // note, the bug was resolved, this could be replaced with editFocusNode.addListener, and then we wouldn't need to retain the signals, because listeners are run before detachment.
       _editFocusHandler(false);
     });
     if (widget.initiallySelected) {
-      treeView.cursorPlacement.value = CursorPlacement.forKeyboardCursor(
-          TreeCursor.addressInParent(widget.key as GNKey));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        treeView!.cursorPlacement.value = CursorPlacement.forKeyboardCursor(
+            TreeCursor.addressInParent(widget.key as GNKey));
+      });
     }
 
     cursorState =
@@ -1194,14 +1115,25 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
     // editor = DocumentEditor(document: document);
   }
 
+  @override
+  dispose() {
+    if (treeView != null && snoop(treeView!.hoveredNode) == widget.key) {
+      treeView!.hoveredNode.value = null;
+    }
+    for (var d in toDispose) {
+      d();
+    }
+    super.dispose();
+  }
+
   _editFocusHandler(bool to) {
     var wk = widget.key as GNKey;
     if (to) {
-      retainedEditingNodeSignal.value = wk;
+      treeView!.editedNode.value = wk;
     } else {
       editorController.selection = const TextSelection.collapsed(offset: 0);
-      if (snoop(retainedEditingNodeSignal) == wk) {
-        retainedEditingNodeSignal.value = null;
+      if (snoop(treeView!.editedNode) == wk) {
+        treeView!.editedNode.value = null;
       }
     }
   }
@@ -1216,20 +1148,58 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
 
   @override
   Widget build(BuildContext context) {
-    var theme = Theme.of(context);
+    // var theme = Theme.of(context);
     var color = const Color(0xff000000);
-    var textTheme = theme.textTheme.bodySmall!.copyWith(color: color);
+    // var textTheme = theme.textTheme.bodySmall!.copyWith(color: color);
 
     // decided to use EditableText instead of TextField for forceLine
     // click drag for selection still doesn't work. But actually don't fix that, we also want rich text, so we're going to switch to SuperEditor
     // var ic = stringBeginning(content.value);
-
+    TreeViewState view = Provider.of(context);
     // const backCol = Color.fromRGBO(230, 230, 230, 1.0);
     TreeWidgetConf conf = Provider.of(context);
-
+    var heightMetric = 1.55;
+    var textStyle = TextStyle(
+        color: Colors.black,
+        fontFamily: conf.fontFamily,
+        fontWeight: FontWeight.w400,
+        // tombstone: this is what makes sure the font will be vertically centered in its line instead of lowered to a random degree depending on the whims of the font author
+        leadingDistribution: TextLeadingDistribution.even,
+        fontSize: conf.lineHeight / heightMetric,
+        height: heightMetric);
     return avoidNestingHell(
+      end: EditableText(
+          key: widget.editableKey,
+          controller: editorController,
+          forceLine: false,
+          // major tombstone: There was a bug where sometimes nearhitting wouldn't (seem to) cause the cursor to move, it would leave focusedChild as null. It turned out that the default onTapOutside behavior is to unfocus the EditableText. I noticed this randomly while digging through the EditableText source code. I guess the fact that it was almost random as to whether it happened was a clue that it might have been a result of a race condition. So I thought about which other things might have been grabbing focus and had a look.
+          /// So we must always remember to onTapOutside: do nothing, as the default is to unfocus.
+          onTapOutside: (_) {},
+          onChanged: (s) {
+            view.cursorPlacement.value = CursorPlacement(
+                targetNode: widget.key as GNKey,
+                hostedHow: NodeCursorState.focused,
+                insertionCursor: TreeCursor(widget.key as GNKey, null));
+          },
+          maxLines: null,
+          // onSubmitted: (v) {
+          //   editFocusNode.unfocus();
+          // },
+          enableInteractiveSelection: true,
+          showSelectionHandles: true,
+          // works, but not what we're looking for
+          // selectionControls: CupertinoTextSelectionControls(),
+          focusNode: editFocusNode,
+          selectionColor: color.withAlpha(70),
+          style: textStyle,
+          cursorOpacityAnimates: true,
+          cursorOffset: const Offset(-1.2, 0),
+          cursorRadius: const Radius.circular(1.3),
+          cursorWidth: 1.5,
+          cursorColor: color,
+          backgroundCursorColor: color),
       [
-        // the first widget must always be a TreeWidget, so that the treewidget renderobjects can get right at the treerenderobject of their children
+        // the topmost widget must always be a TreeWidget, so that the treewidget renderobjects can get right at the treerenderobject of their children
         (w) => TreeWidget(
             depth: widget.depth,
             nodeStateKey: widget.key as GNKey,
@@ -1264,10 +1234,10 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
             },
             onHoverChange: (at, to) {
               if (to) {
-                retainedHoverSignal.value = (widget.key! as GNKey);
+                treeView!.hoveredNode.value = (widget.key! as GNKey);
               } else {
-                if (snoop(retainedHoverSignal) == widget.key!) {
-                  retainedHoverSignal.value = null;
+                if (snoop(treeView!.hoveredNode) == widget.key!) {
+                  treeView!.hoveredNode.value = null;
                 }
               }
             },
@@ -1308,30 +1278,6 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
             },
             child: w),
       ],
-      end: EditableText(
-          key: widget.editableKey,
-          controller: editorController,
-          forceLine: false,
-          // major tombstone: There was a bug where sometimes nearhitting wouldn't (seem to) cause the cursor to move, it would leave focusedChild as null. It turned out that the default onTapOutside behavior is to unfocus the EditableText. I noticed this randomly while digging through the EditableText source code. I guess the fact that it was almost random as to whether it happened was a clue that it might have been a result of a race condition. So I thought about which other things might have been grabbing focus and had a look.
-          /// So we must always remember to onTapOutside: do nothing, as the default is to unfocus.
-          onTapOutside: (_) {},
-          maxLines: null,
-          // onSubmitted: (v) {
-          //   editFocusNode.unfocus();
-          // },
-          enableInteractiveSelection: true,
-          showSelectionHandles: true,
-          // works, but not what we're looking for
-          // selectionControls: CupertinoTextSelectionControls(),
-          focusNode: editFocusNode,
-          selectionColor: color.withAlpha(70),
-          style: textTheme,
-          cursorOpacityAnimates: true,
-          cursorOffset: const Offset(-1.2, 0),
-          cursorRadius: const Radius.circular(1.3),
-          cursorWidth: 1.5,
-          cursorColor: color,
-          backgroundCursorColor: color),
     );
 
     // this has a bunch of padding I don't know how to remove at the moment, it also stores a lot of state, also the current version is behind the documentation, also undo isn't in yet.
@@ -1351,14 +1297,6 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
     //     documentPadding: const EdgeInsets.all(0),
     //   ),
     // );
-  }
-
-  @override
-  dispose() {
-    for (var d in toDispose) {
-      d();
-    }
-    super.dispose();
   }
 }
 
@@ -1409,6 +1347,8 @@ class TreeWidgetConf {
   final double cursorColorLowFade;
   final double cursorSpanWhenInside;
 
+  final String fontFamily;
+
   TreeWidgetConf({
     this.lineMax = 18,
     this.lengthMax = double.infinity,
@@ -1431,8 +1371,9 @@ class TreeWidgetConf {
     this.cursorSpan = 3.3,
     this.cursorHeight = 14,
     this.cursorSpanWhenInside = 7,
-    this.nodeBackgroundCornerRounding = 9,
+    this.nodeBackgroundCornerRounding = 5,
     this.indent = 8,
+    this.fontFamily = "Inter",
     this.parenSpan = 13,
     this.spacing = 4,
     this.nodeHighlightStrokeColor = const Color.fromARGB(255, 57, 57, 57),
@@ -1447,7 +1388,7 @@ class TreeWidgetConf {
         // ]);
         gradient(const [
           (Color.fromARGB(255, 250, 250, 250), 2),
-          (Color.fromARGB(255, 216, 216, 216), 2),
+          (Color.fromARGB(255, 216, 216, 216), 3),
         ]);
   }
 }
@@ -1552,7 +1493,7 @@ class TreeWidgetRenderObject extends RenderBox
   Pulser highlightPulser;
   BumpPulse bumpPulse;
   // sometimes needs to be terminated separately from the other animations
-  int indefiniteAnimation = -1;
+  int cursorBlinkAnimation = -1;
 
   /// tracks treeDepth
   Easer treeDepth;
@@ -1571,8 +1512,8 @@ class TreeWidgetRenderObject extends RenderBox
         position = SmoothV2.unset(duration: conf.defaultAnimationDuration),
         treeDepth = Easer(treeDepth.toDouble()),
         highlighted = Easer(highlighted ? 1 : 0),
-        highlightPulser = Pulser(duration: 190),
-        bumpPulse = BumpPulse(duration: 200) {
+        highlightPulser = Pulser(duration: 240),
+        bumpPulse = BumpPulse(duration: 600) {
     setCursorState(cursorState);
     registerEaser(this.highlighted);
     registerEaser(highlightPulser);
@@ -1586,10 +1527,10 @@ class TreeWidgetRenderObject extends RenderBox
     cursorState = cursor;
     if (whetherVisible(cursor)) {
       var na = indefiniteAnimationBegins();
-      terminateAnimation(indefiniteAnimation);
-      indefiniteAnimation = na;
+      terminateAnimation(cursorBlinkAnimation);
+      cursorBlinkAnimation = na;
     } else {
-      terminateAnimation(indefiniteAnimation);
+      terminateAnimation(cursorBlinkAnimation);
     }
   }
 
@@ -1620,17 +1561,17 @@ class TreeWidgetRenderObject extends RenderBox
     final isMultiline = parentData is TreeWidgetParentData
         ? (parentData as TreeWidgetParentData).multiline
         : true;
-    final o = offset + bumpPulse.v();
+    offset = offset + bumpPulse.v() * 2;
 
     context.canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(
-              o.dx, o.dy, animatedDimensions.dx, animatedDimensions.dy),
+          Rect.fromLTWH(offset.dx, offset.dy, animatedDimensions.dx,
+              animatedDimensions.dy),
           Radius.circular(
               conf.nodeBackgroundCornerRounding)), // 10 is the corner radius
       Paint()
         ..color = lightenOrDimDependingOnBrightness(
-            color, highlightPulser.v() * (isMultiline ? 0.05 : 0.085))
+            color, highlightPulser.v() * (isMultiline ? 0.04 : 0.056))
         ..style = PaintingStyle.fill,
     );
 
