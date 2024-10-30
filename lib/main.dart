@@ -205,27 +205,11 @@ class TreeCursor {
   }
 
   TreeCursor? nextFirmly() {
-    if (before == null) {
-      return parentCursor()?.nextFirmly();
-    }
-    var pca = parentChildren();
-    int i = pca.indexWhere((c) => c.key == before);
-    if (i + 1 < pca.length) {
-      return TreeCursor(into, pca[i + 1].key as GNKey);
-    } else {
-      return TreeCursor(into, null);
-    }
+    return next() ?? parentCursor()?.next();
   }
 
   TreeCursor? prevFirmly() {
-    var pca = parentChildren();
-    int i =
-        before != null ? pca.indexWhere((c) => c.key == before) : pca.length;
-    if (i > 0) {
-      return TreeCursor(into, pca[i - 1].key as GNKey);
-    } else {
-      return parentCursor()?.prevFirmly();
-    }
+    return prev() ?? parentCursor();
   }
 
   TreeCursor? next() {
@@ -1774,10 +1758,12 @@ class TreeWidgetRenderObject extends RenderBox
       adjustOwnSpan();
 
       // allowInlineInFirstRow feature
-      Size rsize() => rootsUnofficialSize ?? size;
-      bool parentNodeOverallOversize() =>
-          rsize().width > constraintser.maxWidth ||
-          rsize().height > conf.lineHeight;
+      bool parentNodeOverallOversize() {
+        Size rsize = rootsUnofficialSize ?? size;
+        return rsize.width > constraintser.maxWidth ||
+            rsize.height > conf.lineHeight;
+      }
+
       if (lineNumber == 0 &&
           !conf.allowInlineInFirstRow &&
           !hasLaidSomethingInThisLine &&
