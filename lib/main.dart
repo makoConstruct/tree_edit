@@ -112,9 +112,6 @@ class TreeDelete extends TreeEdit {
   @override
   undo(TreeViewState ts) {
     ts.rawInsert(at, encompassingContents: !deleteEntireSegment, snapshot);
-    // I think this feels better for some reason, but it's frivolous, and causes a crash because the widget isn't mounted yet. I guess we're being punished for using the widget states/id as our model. Take heed. A time will come when we can no longer do that.
-    // ts.cursorPlacement.value = CursorPlacement.forKeyboardCursor(
-    // TreeCursor.addressInParent(snapshot.key as GNKey));
   }
 }
 
@@ -323,7 +320,6 @@ class TreeViewState extends State<TreeView>
   late Signal<String> fileName;
   late final StreamController<TreeEdit> edits;
   // the focus that's selected when the user is selecting on the node level rather than the text level
-  late final FocusNode nodeSelectionFocus;
   int rebuildCount = 0;
   late Computed<Future<Widget>> loadedFromFile;
   // these two are used to alter the behavior of left and right events when descending
@@ -351,8 +347,6 @@ class TreeViewState extends State<TreeView>
         ? EditingMode.mousing
         : EditingMode.typing;
   }
-
-  late final AnimationController blinkAnimation;
 
   List<TreeEdit> undoStack = [];
   late GNKey rootNode;
@@ -547,12 +541,20 @@ class TreeViewState extends State<TreeView>
   void rawDelete(TreeNode snapshot, {required bool spillContents}) {
     var parentKey = snapshot.parent!;
     var parentState = parentKey.currentState!;
+
     bool cursorCaughtByDeletion = false;
     var tc = TreeCursor.addressInParent(snapshot.key as GNKey);
-    TreeCursor newCursorIfCursorCaught = tc.prev() ??
-        tc.parentCursor() ??
-        tc.next() ??
-        tc; //note, if tc.next() is null, that means tc was a null (ending) cursor, so tc is actually still valid
+    TreeCursor newCursorIfCursorCaught;
+    if (spillContents) {
+      var tcc = tc.firstChild();
+      if (tcc!.before != null) {
+        newCursorIfCursorCaught = tcc;
+      } else {
+        newCursorIfCursorCaught = tc.next() ?? tc;
+      }
+    } else {
+      newCursorIfCursorCaught = tc.next() ?? tc;
+    }
     var cp = snoop(cursorPlacement);
     void checkCursor(GNKey at) {
       if (!cursorCaughtByDeletion && cp != null) {
@@ -769,6 +771,9 @@ class TreeViewState extends State<TreeView>
               var j = rootNode.currentState!.toJson();
               File(snoop(fileName)).writeAsString(jsonEncode(j));
             }),
+            GoEdit: cb<GoEdit>((c) {
+              snoop(cursorPlacement)?.targetNode.currentState?.editFocus();
+            }),
             CursorAscend: cb<CursorAscend>((c) {
               CursorPlacement? cp = snoop(cursorPlacement);
               if (cp != null) {
@@ -893,11 +898,6 @@ class TreeViewState extends State<TreeView>
     edits.stream.listen((e) {
       applyTreeEdit(e);
     });
-    blinkAnimation = AnimationController(
-        duration: Duration(milliseconds: widget.conf.cursorBlinkDuration),
-        vsync: this)
-      ..repeat();
-    toDispose.add(blinkAnimation.dispose);
   }
 
   @override
@@ -920,8 +920,6 @@ class TreeViewState extends State<TreeView>
         providers: [
           Provider<TreeWidgetConf>(create: (c) => widget.conf),
           Provider<TreeViewState>(create: (c) => this),
-          Provider<BlinkAnimation>(
-              create: (c) => BlinkAnimation(blinkAnimation.view)),
         ],
         child: StreamBuilder(
             stream: loadedFromFile.toStream(),
@@ -1017,6 +1015,10 @@ class Unfocus extends Intent {
   const Unfocus();
 }
 
+class CharLeft extends Intent {
+  const CharLeft();
+}
+
 String stringBeginning(String v) => v.substring(0, min(v.length, 5));
 
 class TreeNodeState extends State<TreeNode> with SignalsMixin {
@@ -1067,9 +1069,14 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
     treeView = Provider.of(context);
   }
 
-  @override
-  activate() {
-    super.activate();
+  void focusAllText() {
+    editFocusNode.requestFocus();
+    editorController.selection = TextSelection(
+        baseOffset: 0, extentOffset: editorController.text.length);
+  }
+
+  void editFocus() {
+    focusAllText();
   }
 
   @override
@@ -1107,9 +1114,7 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
     editorController = TextEditingController(text: snoop(content));
     toDispose.add(editorController.dispose);
     if (widget.initiallyEdited) {
-      editorController.selection =
-          TextSelection(baseOffset: 0, extentOffset: snoop(content).length);
-      editFocusNode.requestFocus();
+      focusAllText();
     }
 
     // document = MutableDocument(
@@ -1169,12 +1174,19 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
     TreeViewState view = Provider.of(context);
     // const backCol = Color.fromRGBO(230, 230, 230, 1.0);
     TreeWidgetConf conf = Provider.of(context);
+    void cursorFocus() {
+      view.cursorPlacement.value = CursorPlacement(
+          targetNode: widget.key as GNKey,
+          hostedHow: NodeCursorState.focused,
+          insertionCursor: TreeCursor(widget.key as GNKey, null));
+    }
+
     var heightMetric = 1.55;
     var textStyle = TextStyle(
         color: Colors.black,
         fontFamily: conf.fontFamily,
         fontWeight: FontWeight.w400,
-        // tombstone: this is what makes sure the font will be vertically centered in its line instead of lowered to a random degree depending on the whims of the font author
+        // this is what makes sure the font will be vertically centered in its line instead of lowered to a random degree depending on the whims of the font author
         leadingDistribution: TextLeadingDistribution.even,
         fontSize: conf.lineHeight / heightMetric,
         height: heightMetric);
@@ -1186,11 +1198,11 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
           // major tombstone: There was a bug where sometimes nearhitting wouldn't (seem to) cause the cursor to move, it would leave focusedChild as null. It turned out that the default onTapOutside behavior is to unfocus the EditableText. I noticed this randomly while digging through the EditableText source code. I guess the fact that it was almost random as to whether it happened was a clue that it might have been a result of a race condition. So I thought about which other things might have been grabbing focus and had a look.
           /// So we must always remember to onTapOutside: do nothing, as the default is to unfocus.
           onTapOutside: (_) {},
+          onSelectionChanged: (s, _) {
+            cursorFocus();
+          },
           onChanged: (s) {
-            view.cursorPlacement.value = CursorPlacement(
-                targetNode: widget.key as GNKey,
-                hostedHow: NodeCursorState.focused,
-                insertionCursor: TreeCursor(widget.key as GNKey, null));
+            cursorFocus();
           },
           maxLines: null,
           // onSubmitted: (v) {
@@ -1198,8 +1210,6 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
           // },
           enableInteractiveSelection: true,
           showSelectionHandles: true,
-          // works, but not what we're looking for
-          // selectionControls: CupertinoTextSelectionControls(),
           focusNode: editFocusNode,
           selectionColor: color.withAlpha(70),
           style: textStyle,
@@ -1223,16 +1233,19 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
         (w) => Shortcuts(
                 shortcuts: const {
                   SingleActivator(LogicalKeyboardKey.escape): Unfocus(),
-                  SingleActivator(LogicalKeyboardKey.enter): Unfocus(),
-                  // trying to convey here that shift-enter shouldn't cause unfocus, but this was already true
-                  SingleActivator(LogicalKeyboardKey.enter, shift: true):
-                      DoNothingIntent(),
+                  // SingleActivator(LogicalKeyboardKey.enter): Unfocus(),
+                  // educational tombstone: The following actually sabotaged shift+enter instead of reserving space for it, as having any shortcut that matches an action you want to be able to take place in the text box will block the key event from reaching it. This is just because most Action handlers return KeyEventResult.handled. You can define Action handlers that don't.
+                  // trying to convey here that shift-enter shouldn't cause unfocus, but this was already true, especially now
+                  // SingleActivator(LogicalKeyboardKey.enter, shift: true):
+                  //     DoNothingIntent(),
                 },
                 child: Actions(actions: {
                   Unfocus: CallbackAction<Unfocus>(
-                      onInvoke: (_) => editFocusNode.unfocus())
+                      onInvoke: (_) => editFocusNode.unfocus()),
                 }, child: w)),
-        (w) => Padding(padding: const EdgeInsets.only(left: 5), child: w),
+        //the padding is uneven because there's a small amount of padding on EditableTexts at the end, I think to accomodate the cursor in after position?
+        (w) => Padding(
+            padding: const EdgeInsets.only(left: 5, right: 2.5), child: w),
         (w) => NearhitRecipient(
             onPointerDown: (at) {
               editFocusNode.requestFocus();
@@ -1257,20 +1270,22 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
             skipTraversal: true,
             onFocusChange: _editFocusHandler,
             onKeyEvent: (FocusNode n, KeyEvent event) {
-              bool bsp = event.logicalKey == LogicalKeyboardKey.backspace;
               if (event is KeyDownEvent) {
-                if (editorController.text.isEmpty &&
-                    (bsp || event.logicalKey == LogicalKeyboardKey.delete)) {
-                  if (bsp) {
-                    editFocusNode.previousFocus();
-                  } else {
-                    editFocusNode.nextFocus();
+                bool bsp = event.logicalKey == LogicalKeyboardKey.backspace;
+                if (event.logicalKey == LogicalKeyboardKey.delete || bsp) {
+                  if (editorController.text.isEmpty) {
+                    if (bsp) {
+                      editFocusNode.previousFocus();
+                    } else {
+                      editFocusNode.nextFocus();
+                    }
+                    Provider.of<TreeViewState>(context, listen: false)
+                        .edits
+                        .add(TreeDelete(
+                            snapshot: regenerateWidgetTree(),
+                            deleteEntireSegment: false));
+                    return KeyEventResult.handled;
                   }
-                  Provider.of<TreeViewState>(context, listen: false).edits.add(
-                      TreeDelete(
-                          snapshot: regenerateWidgetTree(),
-                          deleteEntireSegment: false));
-                  return KeyEventResult.handled;
                 } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft &&
                     min(editorController.selection.baseOffset,
                             editorController.selection.extentOffset) ==
@@ -1375,10 +1390,10 @@ class TreeWidgetConf {
     this.insertBeforeZoneWhenBeforeRatio = 0.3,
     this.insertBeforeZoneWhenBeforeMax = 7,
     this.nodeStrokeWidth = 1.3,
-    this.allowInlineInFirstRow = true,
+    this.allowInlineInFirstRow = false,
     this.defaultAnimationDuration = 200,
     this.cursorColorLowFade = 0.6,
-    this.cursorBlinkDuration = 1600,
+    this.cursorBlinkDuration = 1200,
     this.cursorColor = const Color.fromARGB(255, 31, 31, 31),
     this.nodeHighlightOutlineInflation = 2,
     this.cursorSpan = 3.3,
@@ -1664,27 +1679,31 @@ class TreeWidgetRenderObject extends RenderBox
   void performLayout() {
     var pd = parentData;
     if (pd is TreeWidgetParentData) {
-      computeLayout(pd.doingInlineLayoutApproximation, false);
+      size = computeLayout(pd.doingInlineLayoutApproximation, null);
     } else {
       //then you're the root treenode and you should initiate a wide layout to prepare widths for the real one
-      computeLayout(true, true);
-      computeLayout(false, true);
+      Size rsize = Size.zero;
+      // the root treenode doesn't need to set its constraints on the debugInlinePass, as it will certainly be called again, and because it it doesn't need to communicate its wide size up during the doingInline phase, and because defying the constraints it was passed freaks everything out.
+      rsize = computeLayout(true, rsize);
+      size = computeLayout(false, rsize);
     }
   }
 
   // when doingInlineLayoutApproximation, it's laying out as if it has infinite space. Those dimensions can be computed quickly and without any quadratic blowup. They're then used to compute the real dimensions without quadratic blowup, which was happening otherwise.
   // it's not formally doing layout iff doingInlineLayoutApproximation is true. It needs to be able to run in this distinct mode so that we can do a layout pass where we just compute how wide everything would be if it were allowed to be as wide as it wanted, which we then use in the real layout. Without this, it freezes for a moment when nesting more than say 8 levels deep.
-  void computeLayout(bool doingInlineLayoutApproximation, bool isRootTreeNode) {
+  // has to store rootSize externally since it might not fit the constraints on the first pass
+  Size computeLayout(
+      bool doingInlineLayoutApproximation, Size? rootsUnofficialSize) {
+    bool isRootTreeNode() => rootsUnofficialSize != null;
     bool rootNodeUsingFakeConstraints =
-        isRootTreeNode && doingInlineLayoutApproximation;
+        isRootTreeNode() && doingInlineLayoutApproximation;
     BoxConstraints constraintser =
         rootNodeUsingFakeConstraints ? const BoxConstraints() : constraints;
 
     double width = conf.parenSpan * 2;
     double height = conf.lineHeight;
     if (childCount == 0) {
-      size = Size(width, height);
-      return;
+      return Size(width, height);
     }
     RenderBox? child = firstChild;
 
@@ -1753,8 +1772,21 @@ class TreeWidgetRenderObject extends RenderBox
       childParentData.animatedOffsetEaser.approach(curOffset);
       childParentData.multiline = overTall();
       adjustOwnSpan();
-      if (overTall()) {
-        //we don't put anything else in tall item lines
+
+      // allowInlineInFirstRow feature
+      Size rsize() => rootsUnofficialSize ?? size;
+      bool parentNodeOverallOversize() =>
+          rsize().width > constraintser.maxWidth ||
+          rsize().height > conf.lineHeight;
+      if (lineNumber == 0 &&
+          !conf.allowInlineInFirstRow &&
+          !hasLaidSomethingInThisLine &&
+          !doingInlineLayoutApproximation &&
+          parentNodeOverallOversize()) {
+        // if we already know that we're oversize in some way, then make sure nothing else stays in this line
+        nextLine(child.size.height);
+      } else if (overTall()) {
+        //we don't put anything else in tall item lines, and there's a config option that also gives the first item of a tall one its own line
         nextLine(child.size.height);
       } else {
         var nextdx = curOffset.dx + child.size.width + conf.spacingInLine;
@@ -1769,10 +1801,8 @@ class TreeWidgetRenderObject extends RenderBox
 
       child = childParentData.nextSibling;
     }
-    // the root treenode doesn't need to set its constraints on the debugInlinePass, as it will certainly be called again, and because it it doesn't need to communicate its wide size up during the doingInline phase, and because defying its constraints freaks everything out.
-    if (!rootNodeUsingFakeConstraints) {
-      size = constraintser.constrain(Size(width, height));
-    }
+
+    return constraintser.constrain(Size(width, height));
   }
 
   @override

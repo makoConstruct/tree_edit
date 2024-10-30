@@ -85,6 +85,11 @@ class GoActivate extends TreeViewIntent {
   const GoActivate();
 }
 
+@immutable
+class GoEdit extends TreeViewIntent {
+  const GoEdit();
+}
+
 /// keyboard scheme for doing everything with the left hand
 const Infos basicLeftHandKeyboardSchemeInfo = {
   SingleActivator(LogicalKeyboardKey.keyD, control: true): (
@@ -174,6 +179,10 @@ const Infos basicLeftHandKeyboardSchemeInfo = {
     GoForward(),
     "go forward"
   ),
+
+  SingleActivator(
+    LogicalKeyboardKey.enter,
+  ): (GoEdit(), "enter link"),
 
   SingleActivator(LogicalKeyboardKey.keyA, control: true): (
     GoAccess(),
