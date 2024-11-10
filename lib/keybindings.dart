@@ -182,7 +182,7 @@ const Infos basicLeftHandKeyboardSchemeInfo = {
 
   SingleActivator(
     LogicalKeyboardKey.enter,
-  ): (GoEdit(), "enter link"),
+  ): (GoEdit(), "edit"),
 
   SingleActivator(LogicalKeyboardKey.keyA, control: true): (
     GoAccess(),

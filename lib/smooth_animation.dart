@@ -21,8 +21,10 @@ double sq(double a) {
 
 double clampUnit(double v) => max(0, min(1, v));
 
-double progressOverTime(double duration, double v) =>
-    clampUnit((v - currentTime()) / duration);
+double anti(double v) => 1 - v;
+
+double progressOverTime(double duration, double startTime) =>
+    clampUnit((currentTime() - startTime) / duration);
 
 double linearAccelerationEaseInOutWithInitialVelocity(
     double t, double initialVelocity) {
@@ -300,6 +302,57 @@ class SmoothV2 extends Animator {
       dx.approach(v.dx);
       dy.approach(v.dy);
       notifyListeners();
+    }
+  }
+}
+
+Color lerpColor(Color startColor, Color endColor, double p) {
+  if (startColor.alpha == 0) {
+    return endColor.withAlpha((endColor.alpha * p).toInt());
+  } else if (endColor.alpha == 0) {
+    return startColor.withAlpha((startColor.alpha * anti(p)).toInt());
+  } else {
+    final np = anti(p);
+    return Color.fromARGB(
+        (startColor.alpha * np + endColor.alpha * p).toInt(),
+        (startColor.red * np + endColor.red * p).toInt(),
+        (startColor.green * np + endColor.green * p).toInt(),
+        (startColor.blue * np + endColor.blue * p).toInt());
+  }
+}
+
+// a linear lerp with rainbowing, not ideal
+class ColorEaser extends Animator {
+  Color endColor;
+  Color startColor;
+  @override
+  double duration;
+  double startTime;
+  ColorEaser(
+      {this.startColor = Colors.transparent,
+      this.endColor = Colors.transparent,
+      required this.duration})
+      : startTime = double.negativeInfinity;
+  void approach(Color to) {
+    if (to != endColor) {
+      startTime = currentTime();
+      startColor = v();
+      endColor = to;
+      notifyListeners();
+    }
+  }
+
+  Color v() {
+    if (startColor.alpha == 0) {
+      return endColor.withAlpha(
+          (endColor.alpha * progressOverTime(duration, startTime)).toInt());
+    } else if (endColor.alpha == 0) {
+      return startColor.withAlpha(
+          (startColor.alpha * anti(progressOverTime(duration, startTime)))
+              .toInt());
+    } else {
+      return lerpColor(
+          startColor, endColor, progressOverTime(duration, startTime));
     }
   }
 }

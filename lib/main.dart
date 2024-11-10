@@ -155,7 +155,7 @@ enum NodeCursorState {
   after,
   inside,
 
-  /// in which case there's another cursor in the way
+  /// in which case there's another cursor from the text field so don't display our cursor
   focused,
 }
 
@@ -297,6 +297,12 @@ class CursorPlacement {
             ? doin(vc.lastOrNull?.key as GNKey, NodeCursorState.after)
             : doin(v.into, NodeCursorState.inside);
   }
+
+  CursorPlacement.focused(GNKey key)
+      : this(
+            targetNode: key,
+            hostedHow: NodeCursorState.focused,
+            insertionCursor: TreeCursor(key, null));
 }
 
 class TreeViewState extends State<TreeView>
@@ -520,6 +526,16 @@ class TreeViewState extends State<TreeView>
       nl.removeRange(ati + 1, ati + 1 + v.children.length);
     }
     cs.value = nl;
+    cursorPlacement.value = encompassingContents
+        // hmm, sometimes you actually want the target node to be the first child, if you're pasting. You only want it to be the inserted node if you're creating and so you're about to write the first content
+        ? CursorPlacement(
+            insertionCursor: TreeCursor(at.into, v.key as GNKey),
+            targetNode: v.key as GNKey,
+            hostedHow: NodeCursorState.inside)
+        : CursorPlacement(
+            insertionCursor: TreeCursor(at.into, v.key as GNKey),
+            targetNode: v.key as GNKey,
+            hostedHow: NodeCursorState.after);
   }
 
   void rawDelete(TreeNode snapshot, {required bool spillContents}) {
@@ -611,7 +627,13 @@ class TreeViewState extends State<TreeView>
     if (currentLocalMousePosition != null) {
       cursorPlacement.value = findCursorPlacement(currentLocalMousePosition!);
     } else {
-      cursorPlacement.value = null;
+      //revert to editedNode
+      GNKey? enk = snoop(editedNode);
+      if (enk != null) {
+        cursorPlacement.value = CursorPlacement.focused(enk);
+      } else {
+        cursorPlacement.value = null;
+      }
     }
   }
 
@@ -756,7 +778,7 @@ class TreeViewState extends State<TreeView>
               File(snoop(fileName)).writeAsString(jsonEncode(j));
             }),
             GoEdit: cb<GoEdit>((c) {
-              snoop(cursorPlacement)?.targetNode.currentState?.editFocus();
+              snoop(cursorPlacement)?.targetNode.currentState?.focusBegining();
             }),
             CursorAscend: cb<CursorAscend>((c) {
               CursorPlacement? cp = snoop(cursorPlacement);
@@ -1059,6 +1081,12 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
         baseOffset: 0, extentOffset: editorController.text.length);
   }
 
+  void focusBegining() {
+    editFocusNode.requestFocus();
+    editorController.selection =
+        const TextSelection(baseOffset: 0, extentOffset: 0);
+  }
+
   void editFocus() {
     focusAllText();
   }
@@ -1159,10 +1187,7 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
     // const backCol = Color.fromRGBO(230, 230, 230, 1.0);
     TreeWidgetConf conf = Provider.of(context);
     void cursorFocus() {
-      view.cursorPlacement.value = CursorPlacement(
-          targetNode: widget.key as GNKey,
-          hostedHow: NodeCursorState.focused,
-          insertionCursor: TreeCursor(widget.key as GNKey, null));
+      view.cursorPlacement.value = CursorPlacement.focused(widget.key as GNKey);
     }
 
     var heightMetric = 1.55;
@@ -1206,7 +1231,6 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
       [
         // the topmost widget must always be a TreeWidget, so that the treewidget renderobjects can get right at the treerenderobject of their children
         (w) => TreeWidget(
-            depth: widget.depth,
             nodeStateKey: widget.key as GNKey,
             highlighted: targeted.value,
             cursorState: cursorState.value,
@@ -1216,12 +1240,12 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
             children: children.value),
         (w) => Shortcuts(
                 shortcuts: const {
-                  SingleActivator(LogicalKeyboardKey.escape): Unfocus(),
+                  // SingleActivator(LogicalKeyboardKey.escape): Unfocus(),
                   // SingleActivator(LogicalKeyboardKey.enter): Unfocus(),
                   // educational tombstone: The following actually sabotaged shift+enter instead of reserving space for it, as having any shortcut that matches an action you want to be able to take place in the text box will block the key event from reaching it. This is just because most Action handlers return KeyEventResult.handled. You can define Action handlers that don't.
                   // trying to convey here that shift-enter shouldn't cause unfocus, but this was already true, especially now
-                  // SingleActivator(LogicalKeyboardKey.enter, shift: true):
-                  //     DoNothingIntent(),
+                  // SingleActivator(LogicalKeyboardKey.arrowLeft):
+                  //     ArrowLeft(),
                 },
                 child: Actions(actions: {
                   Unfocus: CallbackAction<Unfocus>(
@@ -1270,18 +1294,21 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
                             deleteEntireSegment: false));
                     return KeyEventResult.handled;
                   }
-                } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft &&
-                    min(editorController.selection.baseOffset,
-                            editorController.selection.extentOffset) ==
-                        0) {
-                  editFocusNode.previousFocus();
-                  return KeyEventResult.handled;
-                } else if (event.logicalKey == LogicalKeyboardKey.arrowRight &&
-                    max(editorController.selection.baseOffset,
-                            editorController.selection.extentOffset) ==
-                        editorController.text.length) {
-                  editFocusNode.nextFocus();
-                  return KeyEventResult.handled;
+                  // this was kind of cool, but it interfered with alt+left/right. I think that can be sorted out (make left/right shortcuts that're only active in this scope?) but I'm not sure these were really practical
+                  // } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft &&
+                  //     min(editorController.selection.baseOffset,
+                  //             editorController.selection.extentOffset) ==
+                  //         0) {
+                  //   editFocusNode.previousFocus();
+                  //   return KeyEventResult.handled;
+                  // } else if (event.logicalKey == LogicalKeyboardKey.arrowRight &&
+                  //     max(editorController.selection.baseOffset,
+                  //             editorController.selection.extentOffset) ==
+                  //         editorController.text.length) {
+                  //   editFocusNode.nextFocus();
+                  //   return KeyEventResult.handled;
+                } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                  editFocusNode.unfocus();
                 }
               }
               return KeyEventResult.ignored;
@@ -1350,13 +1377,20 @@ class TreeWidgetConf {
 
   final double cursorSpan;
   final double cursorHeight;
-  final bool allowInlineInFirstRow;
   final Color cursorColor;
   final int cursorBlinkDuration;
 
   /// interpolates between cursorColor towards background this far on the cursor blink lows
   final double cursorColorLowFade;
   final double cursorSpanWhenInside;
+  // doesn't color the node background for any nodes where the structure is fairly obvious already. (leaving some ambiguity with nodes that share a line but aren't nested)
+  final bool backgroundsForBasalNodes;
+
+  /// whether items can appear in the same row as their parent node handle/element when the parent stretches over multiple lines, ie, whether nodes that have gone vertical can have other things in their first row
+  final bool allowInlineInFirstRow;
+
+  /// whether items that have no children generally draw a background (warning, not implemented)
+  final bool drawBackgroundsForSingleItems;
 
   final String fontFamily;
 
@@ -1373,21 +1407,23 @@ class TreeWidgetConf {
     this.insertBeforeZoneWhenBeforeMin = 2,
     this.insertBeforeZoneWhenBeforeRatio = 0.3,
     this.insertBeforeZoneWhenBeforeMax = 7,
+    this.drawBackgroundsForSingleItems = true,
     this.nodeStrokeWidth = 1.3,
-    this.allowInlineInFirstRow = false,
+    this.allowInlineInFirstRow = true,
     this.defaultAnimationDuration = 200,
     this.cursorColorLowFade = 0.6,
     this.cursorBlinkDuration = 1200,
     this.cursorColor = const Color.fromARGB(255, 31, 31, 31),
     this.nodeHighlightOutlineInflation = 2,
     this.cursorSpan = 3.3,
+    this.backgroundsForBasalNodes = true,
     this.cursorHeight = 14,
     this.cursorSpanWhenInside = 7,
-    this.nodeBackgroundCornerRounding = 5,
-    this.indent = 8,
+    this.nodeBackgroundCornerRounding = 6,
+    this.indent = 9,
     this.fontFamily = "Inter",
     this.parenSpan = 13,
-    this.spacing = 4,
+    this.spacing = 2,
     this.nodeHighlightStrokeColor = const Color.fromARGB(255, 57, 57, 57),
     this.nearestHitRadius = 5,
     List<Color>? nodeBackgroundColors,
@@ -1403,6 +1439,9 @@ class TreeWidgetConf {
           (Color.fromARGB(255, 216, 216, 216), 2),
         ]);
   }
+
+  Color backgroundColorFor(int depth) =>
+      nodeBackgroundColors[depth % nodeBackgroundColors.length];
 }
 
 double sign(double v) => v > 0 ? 1 : -1;
@@ -1438,7 +1477,6 @@ List<Color> gradient(List<(Color, int)> nodes) {
 class TreeWidget extends MultiChildRenderObjectWidget {
   // used by some exotic hit testing processes
   final GNKey? nodeStateKey;
-  final int depth;
   final bool highlighted;
   final NodeCursorState cursorState;
   TreeWidget(
@@ -1450,7 +1488,6 @@ class TreeWidget extends MultiChildRenderObjectWidget {
       List<Widget> children = const [],
       super.key,
       required this.highlighted,
-      required this.depth,
       this.cursorState = NodeCursorState.none,
       this.nodeStateKey})
       : super(children: [head, ...children]);
@@ -1459,7 +1496,6 @@ class TreeWidget extends MultiChildRenderObjectWidget {
     return TreeWidgetRenderObject(
         // [todo] this is why changing treeconf dynamically doesn't work. I kinda think we should be listening, but I'm not sure how to update on a change of only some variables.
         conf: Provider.of(context, listen: false),
-        treeDepth: depth,
         highlighted: highlighted,
         cursorState: cursorState,
         key: nodeStateKey,
@@ -1471,7 +1507,6 @@ class TreeWidget extends MultiChildRenderObjectWidget {
       BuildContext context, covariant RenderObject renderObject) {
     var ro = renderObject as TreeWidgetRenderObject;
     ro.hasChild = children.length > 1;
-    ro.treeDepth.approach(depth.toDouble());
     var nh = highlighted ? 1 : 0;
     if (ro.highlighted.endValue != nh) {
       ro.highlighted.approach(highlighted ? 1 : 0);
@@ -1497,6 +1532,7 @@ class TreeWidgetRenderObject extends RenderBox
   final TreeWidgetConf conf;
   final GNKey? key;
   bool hasChild;
+  bool isVertical = false;
   Time focusPulse = double.negativeInfinity;
   // currently not using this
   Easer highlighted;
@@ -1507,22 +1543,21 @@ class TreeWidgetRenderObject extends RenderBox
   // sometimes needs to be terminated separately from the other animations
   int cursorBlinkAnimation = -1;
 
-  /// tracks treeDepth
-  Easer treeDepth;
+  // tracks with treeDepth
+  ColorEaser backgroundColor;
 
   // null if cursor absent, true iff the cursor (currently denoted by selected) should be rendered after this widget or before. (After render happens when a cursor is pointing at the end of the treenode)
   NodeCursorState cursorState = NodeCursorState.none;
 
   TreeWidgetRenderObject(
       {required this.conf,
-      required int treeDepth,
       required bool highlighted,
       this.key,
       required this.hasChild,
       required NodeCursorState cursorState})
       : animatedSpan = SmoothV2.unset(duration: conf.defaultAnimationDuration),
         position = SmoothV2.unset(duration: conf.defaultAnimationDuration),
-        treeDepth = Easer(treeDepth.toDouble()),
+        backgroundColor = ColorEaser(duration: conf.defaultAnimationDuration),
         highlighted = Easer(highlighted ? 1 : 0),
         highlightPulser = Pulser(duration: 240),
         bumpPulse = BumpPulse(duration: 300) {
@@ -1531,7 +1566,7 @@ class TreeWidgetRenderObject extends RenderBox
     registerEaser(highlightPulser);
     registerEaser(animatedSpan);
     registerEaser(position);
-    registerEaser(this.treeDepth);
+    registerEaser(backgroundColor);
     registerEaser(bumpPulse);
   }
 
@@ -1551,12 +1586,12 @@ class TreeWidgetRenderObject extends RenderBox
     final animatedDimensions = animatedSpan.v();
     offset = offset + bumpPulse.v() * 2;
 
-    final td = treeDepth.v();
-    final int nl = conf.nodeBackgroundColors.length;
-    final color = td == td.toInt()
-        ? conf.nodeBackgroundColors[td.toInt() % nl]
-        : hslerp(conf.nodeBackgroundColors[td.floor() % nl],
-            conf.nodeBackgroundColors[(td.floor() + 1) % nl], td - td.floor());
+    final isMultiline = parentData is TreeWidgetParentData
+        ? (parentData as TreeWidgetParentData).multiline
+        : true;
+
+    final color = backgroundColor.v();
+
     int lightenComponent(int v, double amount) =>
         min(255, max(0, v + (255 * amount).toInt()));
     Color lighten(Color v, double amount) => Color.fromARGB(
@@ -1570,10 +1605,6 @@ class TreeWidgetRenderObject extends RenderBox
         HSLuvColor.fromColor(v).lightness > 100 * (1 - amount)
             ? lighten(v, -amount)
             : lighten(v, amount);
-
-    final isMultiline = parentData is TreeWidgetParentData
-        ? (parentData as TreeWidgetParentData).multiline
-        : true;
 
     context.canvas.drawRRect(
       RRect.fromRectAndRadius(
@@ -1659,6 +1690,25 @@ class TreeWidgetRenderObject extends RenderBox
     }
   }
 
+  void redepth(int parentDepth) {
+    final secondSibling =
+        (firstChild?.parentData as TreeWidgetParentData?)?.nextSibling;
+    bool hasChildNodes = secondSibling != null;
+    int depth =
+        (conf.backgroundsForBasalNodes && (isVertical || !hasChildNodes)) ||
+                (!conf.drawBackgroundsForSingleItems && !hasChildNodes)
+            ? parentDepth
+            : parentDepth + 1;
+    backgroundColor.approach(conf.backgroundColorFor(depth));
+
+    // skip first non-TreeNode child
+    var child = secondSibling;
+    while (child != null) {
+      (child as TreeWidgetRenderObject).redepth(depth);
+      child = (child.parentData as TreeWidgetParentData).nextSibling;
+    }
+  }
+
   @override
   void performLayout() {
     var pd = parentData;
@@ -1670,6 +1720,7 @@ class TreeWidgetRenderObject extends RenderBox
       // the root treenode doesn't need to set its constraints on the debugInlinePass, as it will certainly be called again, and because it it doesn't need to communicate its wide size up during the doingInline phase, and because defying the constraints it was passed freaks everything out.
       rsize = computeLayout(true, rsize);
       size = computeLayout(false, rsize);
+      redepth(0);
     }
   }
 
@@ -1700,7 +1751,7 @@ class TreeWidgetRenderObject extends RenderBox
     Offset curOffset = Offset.zero;
     int lineNumber = 0;
 
-    void layout(RenderBox c) {
+    void layoutChild(RenderBox c) {
       (c.parentData as TreeWidgetParentData).doingInlineLayoutApproximation =
           doingInlineLayoutApproximation;
       c.layout(
@@ -1711,9 +1762,6 @@ class TreeWidgetRenderObject extends RenderBox
     }
 
     while (child != null) {
-      final TreeWidgetParentData childParentData =
-          child.parentData! as TreeWidgetParentData;
-
       void adjustOwnSpan() {
         width =
             max(width, curOffset.dx + child!.size.width + parenSpanToBeUsed);
@@ -1735,18 +1783,20 @@ class TreeWidgetRenderObject extends RenderBox
           constraintser.maxWidth - curOffset.dx - parenSpanToBeUsed;
       bool overTall() => child!.size.height > conf.lineMax;
 
+      final TreeWidgetParentData childParentData =
+          child.parentData! as TreeWidgetParentData;
       // the gnarliest logic is mostly just here xD
       if (doingInlineLayoutApproximation) {
-        layout(child);
+        layoutChild(child);
       }
       if (hasLaidSomethingInThisLine && (overTall() || overWide())) {
         nextLine(conf.lineHeight);
         // if it's infinite (ie, when doingInlineLayoutApproximation), there's no need to do layout again, it will end up with the same dimensions
         if (constraintser.maxWidth.isFinite) {
-          layout(child);
+          layoutChild(child);
         }
       } else if (overWide()) {
-        layout(child);
+        layoutChild(child);
       }
 
       //finalize offset here
@@ -1787,6 +1837,11 @@ class TreeWidgetRenderObject extends RenderBox
 
       child = childParentData.nextSibling;
     }
+    bool hadNodeChild() =>
+        (firstChild?.parentData as TreeWidgetParentData?)?.nextSibling != null;
+    if (height > conf.lineHeight && hadNodeChild()) {
+      height += conf.indent;
+    }
 
     return constraintser.constrain(Size(width, height));
   }
@@ -1794,6 +1849,7 @@ class TreeWidgetRenderObject extends RenderBox
   @override
   set size(Size v) {
     super.size = v;
+    isVertical = v.height > conf.lineHeight;
     animatedSpan.approach(v.bottomRight(Offset.zero));
   }
 
@@ -1933,7 +1989,6 @@ class _BrowsingWindowState extends State<BrowsingWindow> {
   @override
   Widget build(BuildContext context) {
     // If I remove the scaffold, horrible things happen, I don't know why. I think one issue is maybe that theme logic doesn't run until it enters the scaffold. But I can replace that.
-
     return Scaffold(
       body: Stack(children: [
         Row(
@@ -1941,8 +1996,13 @@ class _BrowsingWindowState extends State<BrowsingWindow> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             Expanded(
-                child: SingleChildScrollView(
-                    child: TreeView('tree.json', conf: widget.treeConf))),
+                child: Builder(
+                    builder: (c) => SingleChildScrollView(
+                        child: Container(
+                            constraints: BoxConstraints(
+                                minHeight: MediaQuery.of(context).size.height),
+                            child: TreeView('tree.json',
+                                conf: widget.treeConf))))),
             controls(context)
           ],
         )
