@@ -1,4 +1,5 @@
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:signals/signals_flutter.dart';
 
 /// just avoids nesting hell. eg, `avoidNestingHell(end:v, [a, b, c, d, e, f]) == a(b(c(d(e(f(v))))))`
@@ -32,3 +33,6 @@ Iterable<T> mapSeparated<T>(Iterable<T> parts, {required T separator}) sync* {
     }
   }
 }
+
+bool isAlt(LogicalKeyboardKey k) =>
+    k == LogicalKeyboardKey.altRight || k == LogicalKeyboardKey.altLeft;

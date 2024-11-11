@@ -20,6 +20,25 @@ import 'package:tree_edit/util.dart';
 import 'package:window_manager/window_manager.dart';
 // import 'package:super_editor/super_editor.dart';
 
+// so that you can use alt to trigger conditional breakpoints
+bool testAlt() {
+  bool ret = debugAltHeld;
+  debugAltHeld = false;
+  return ret;
+}
+
+bool debugAltHeld = false;
+
+Widget trackAltHeld(Widget c) => Focus(
+    skipTraversal: true,
+    onKeyEvent: (n, e) {
+      if (isAlt(e.logicalKey)) {
+        debugAltHeld = e is KeyDownEvent;
+      }
+      return KeyEventResult.ignored;
+    },
+    child: c);
+
 void makeWindowDaylightSized() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
@@ -38,7 +57,7 @@ void makeWindowDaylightSized() async {
 }
 
 void main() async {
-  makeWindowDaylightSized();
+  // makeWindowDaylightSized();
 
   runApp(const MyApp());
 }
@@ -154,6 +173,7 @@ enum NodeCursorState {
   before,
   after,
   inside,
+  below,
 
   /// in which case there's another cursor from the text field so don't display our cursor
   focused,
@@ -478,17 +498,21 @@ class TreeViewState extends State<TreeView>
       }
       noteEndOfLine();
       //there were no hits, so use this closest info we just painstakingly assembled
-      var cr = bounds(o, closestInClosestLine);
       TreeWidgetRenderObject cc() =>
           closestInClosestLine as TreeWidgetRenderObject;
-      bool isAfter = cr.center.dx < p.dx;
+      // clever but felt wrong
+      // bool isAfter = cr.center.dx < p.dx;
       TreeCursor ic() => TreeCursor.addressInParent(cc().key!);
       return closestInClosestLine is TreeWidgetRenderObject
           ? CursorPlacement(
-              insertionCursor: isAfter ? ic().next()! : ic(),
+              insertionCursor: ic().next()!,
               targetNode: cc().key as GNKey,
-              hostedHow:
-                  isAfter ? NodeCursorState.after : NodeCursorState.before)
+              hostedHow: p.dy >
+                      ((o + (cc().parentData as BoxParentData).offset) &
+                              cc().size)
+                          .bottom
+                  ? NodeCursorState.below
+                  : NodeCursorState.after)
           : CursorPlacement(
               insertionCursor:
                   TreeCursor(ro.key!, children.firstOrNull?.key as GNKey?),
@@ -1384,13 +1408,16 @@ class TreeWidgetConf {
   final double cursorColorLowFade;
   final double cursorSpanWhenInside;
   // doesn't color the node background for any nodes where the structure is fairly obvious already. (leaving some ambiguity with nodes that share a line but aren't nested)
-  final bool backgroundsForBasalNodes;
+  final bool backgroundsOffForBasalNodes;
 
   /// whether items can appear in the same row as their parent node handle/element when the parent stretches over multiple lines, ie, whether nodes that have gone vertical can have other things in their first row
   final bool allowInlineInFirstRow;
 
   /// whether items that have no children generally draw a background (warning, not implemented)
   final bool drawBackgroundsForSingleItems;
+
+  /// always gives every element its own line (most tree views work this way, it's very simple. You only want it some of the time)
+  final bool alwaysVertical;
 
   final String fontFamily;
 
@@ -1400,7 +1427,7 @@ class TreeWidgetConf {
     this.lengthMin = 16,
     this.lineHeight = 18,
     // kind of want this to be the same as spacing though?
-    this.spacingInLine = 6,
+    this.spacingInLine = 3,
     this.insertBeforeZoneWhenAfterMin = 2,
     this.insertBeforeZoneWhenAfterRatio = 0.27,
     this.insertBeforeZoneWhenAfterMax = 3,
@@ -1410,16 +1437,17 @@ class TreeWidgetConf {
     this.drawBackgroundsForSingleItems = true,
     this.nodeStrokeWidth = 1.3,
     this.allowInlineInFirstRow = true,
+    this.alwaysVertical = false,
     this.defaultAnimationDuration = 200,
     this.cursorColorLowFade = 0.6,
     this.cursorBlinkDuration = 1200,
     this.cursorColor = const Color.fromARGB(255, 31, 31, 31),
     this.nodeHighlightOutlineInflation = 2,
     this.cursorSpan = 3.3,
-    this.backgroundsForBasalNodes = true,
+    this.backgroundsOffForBasalNodes = true,
     this.cursorHeight = 14,
     this.cursorSpanWhenInside = 7,
-    this.nodeBackgroundCornerRounding = 6,
+    this.nodeBackgroundCornerRounding = 7,
     this.indent = 9,
     this.fontFamily = "Inter",
     this.parenSpan = 13,
@@ -1436,7 +1464,7 @@ class TreeWidgetConf {
         // ]);
         gradient(const [
           (Color.fromARGB(255, 250, 250, 250), 2),
-          (Color.fromARGB(255, 216, 216, 216), 2),
+          (Color.fromARGB(255, 229, 229, 229), 2),
         ]);
   }
 
@@ -1640,37 +1668,58 @@ class TreeWidgetRenderObject extends RenderBox
           (time % conf.cursorBlinkDuration) / conf.cursorBlinkDuration;
       var cursorColor = Color.lerp(conf.nodeBackgroundColors[0],
           conf.cursorColor, lerpDouble(conf.cursorColorLowFade, 1, blinku)!)!;
-      var isInside = (cursorState == NodeCursorState.inside);
       var fcb = bounds(offset, firstChild);
       var insideCursorGap = (conf.lineHeight - conf.cursorSpanWhenInside) / 2;
-      context.canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromLTWH(
-                cursorState == NodeCursorState.after
-                    ? offset.dx +
-                        size.width +
-                        conf.spacingInLine / 2 -
-                        conf.cursorSpan / 2
-                    : cursorState == NodeCursorState.before
-                        ? offset.dx -
-                            conf.spacingInLine / 2 -
-                            conf.cursorSpan / 2
-                        : fcb.left +
-                            fcb.width -
-                            insideCursorGap -
-                            conf.cursorSpanWhenInside,
-                isInside
-                    ? fcb.top + insideCursorGap
-                    : offset.dy + conf.lineHeight / 2 - conf.cursorHeight / 2,
-                isInside ? conf.cursorSpanWhenInside : conf.cursorSpan,
-                isInside
-                    ? conf.lineHeight - 2 * insideCursorGap
-                    : conf.cursorHeight),
-            Radius.circular(conf.cursorSpan / 2)),
-        Paint()
-          ..color = cursorColor
-          ..style = PaintingStyle.fill,
-      );
+      Offset cursorOffset;
+      Size cursorSpan;
+      switch (cursorState) {
+        case NodeCursorState.after:
+          cursorOffset = Offset(
+              offset.dx +
+                  size.width +
+                  conf.spacingInLine / 2 -
+                  conf.cursorSpan / 2,
+              offset.dy + conf.lineHeight / 2 - conf.cursorHeight / 2);
+          cursorSpan = Size(conf.cursorSpan, conf.cursorHeight);
+        case NodeCursorState.before:
+          cursorOffset = Offset(
+              offset.dx - conf.spacingInLine / 2 - conf.cursorSpan / 2,
+              offset.dy + conf.lineHeight / 2 - conf.cursorHeight / 2);
+          cursorSpan = Size(conf.cursorSpan, conf.cursorHeight);
+        case NodeCursorState.below:
+          cursorOffset = Offset(
+              offset.dx + conf.indent,
+              offset.dy +
+                  animatedDimensions.dy +
+                  conf.indent / 2 -
+                  conf.cursorSpan / 2);
+          cursorSpan = Size(conf.cursorHeight, conf.cursorSpan);
+        case NodeCursorState.inside:
+          cursorOffset = Offset(
+              fcb.left +
+                  fcb.width -
+                  insideCursorGap -
+                  conf.cursorSpanWhenInside,
+              fcb.top + insideCursorGap);
+          cursorSpan =
+              Size(conf.cursorSpanWhenInside, conf.cursorSpanWhenInside);
+        case NodeCursorState.focused:
+          // it might actually be good to do a below cursor here though
+          cursorOffset = Offset.zero;
+          cursorSpan = Size.zero;
+        case NodeCursorState.none:
+          cursorOffset = Offset.zero;
+          cursorSpan = Size.zero;
+      }
+      if (cursorSpan != Offset.zero) {
+        context.canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              cursorOffset & cursorSpan, Radius.circular(conf.cursorSpan / 2)),
+          Paint()
+            ..color = cursorColor
+            ..style = PaintingStyle.fill,
+        );
+      }
     }
 
     // just defaultPaint but using animatedOffset
@@ -1695,7 +1744,7 @@ class TreeWidgetRenderObject extends RenderBox
         (firstChild?.parentData as TreeWidgetParentData?)?.nextSibling;
     bool hasChildNodes = secondSibling != null;
     int depth =
-        (conf.backgroundsForBasalNodes && (isVertical || !hasChildNodes)) ||
+        (conf.backgroundsOffForBasalNodes && (isVertical || !hasChildNodes)) ||
                 (!conf.drawBackgroundsForSingleItems && !hasChildNodes)
             ? parentDepth
             : parentDepth + 1;
@@ -1789,7 +1838,8 @@ class TreeWidgetRenderObject extends RenderBox
       if (doingInlineLayoutApproximation) {
         layoutChild(child);
       }
-      if (hasLaidSomethingInThisLine && (overTall() || overWide())) {
+      if (hasLaidSomethingInThisLine &&
+          ((overTall() || conf.alwaysVertical) || overWide())) {
         nextLine(conf.lineHeight);
         // if it's infinite (ie, when doingInlineLayoutApproximation), there's no need to do layout again, it will end up with the same dimensions
         if (constraintser.maxWidth.isFinite) {
@@ -1990,7 +2040,7 @@ class _BrowsingWindowState extends State<BrowsingWindow> {
   Widget build(BuildContext context) {
     // If I remove the scaffold, horrible things happen, I don't know why. I think one issue is maybe that theme logic doesn't run until it enters the scaffold. But I can replace that.
     return Scaffold(
-      body: Stack(children: [
+      body: trackAltHeld(Stack(children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.start,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2006,7 +2056,7 @@ class _BrowsingWindowState extends State<BrowsingWindow> {
             controls(context)
           ],
         )
-      ]),
+      ])),
     );
   }
 }
