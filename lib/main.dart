@@ -1361,9 +1361,28 @@ class TreeNodeState extends State<TreeNode> with SignalsMixin {
   }
 }
 
-/// durations are measured in milliseconds
 @immutable
-class TreeWidgetConf {
+class TreeBehaviorControls {
+  final bool backgroundsOffForBasalNodes;
+
+  /// whether items can appear in the same row as their parent node handle/element when the parent stretches over multiple lines, ie, whether nodes that have gone vertical can have other things in their first row
+  final bool allowInlineInFirstRow;
+
+  /// whether items that have no children generally draw a background (warning, not implemented)
+  final bool drawBackgroundsForSingleItems;
+
+  /// always gives every element its own line (most tree views work this way, it's very simple. You only want it some of the time)
+  final bool alwaysVertical;
+  const TreeBehaviorControls({
+    required this.backgroundsOffForBasalNodes,
+    required this.allowInlineInFirstRow,
+    required this.drawBackgroundsForSingleItems,
+    required this.alwaysVertical,
+  });
+}
+
+@immutable
+class TreeTheme {
   final double lineMax;
 
   /// the longest an item is allowed to be before we wrap
@@ -1407,21 +1426,10 @@ class TreeWidgetConf {
   /// interpolates between cursorColor towards background this far on the cursor blink lows
   final double cursorColorLowFade;
   final double cursorSpanWhenInside;
-  // doesn't color the node background for any nodes where the structure is fairly obvious already. (leaving some ambiguity with nodes that share a line but aren't nested)
-  final bool backgroundsOffForBasalNodes;
-
-  /// whether items can appear in the same row as their parent node handle/element when the parent stretches over multiple lines, ie, whether nodes that have gone vertical can have other things in their first row
-  final bool allowInlineInFirstRow;
-
-  /// whether items that have no children generally draw a background (warning, not implemented)
-  final bool drawBackgroundsForSingleItems;
-
-  /// always gives every element its own line (most tree views work this way, it's very simple. You only want it some of the time)
-  final bool alwaysVertical;
 
   final String fontFamily;
 
-  TreeWidgetConf({
+  TreeTheme({
     this.lineMax = 18,
     this.lengthMax = double.infinity,
     this.lengthMin = 16,
@@ -1434,17 +1442,13 @@ class TreeWidgetConf {
     this.insertBeforeZoneWhenBeforeMin = 2,
     this.insertBeforeZoneWhenBeforeRatio = 0.3,
     this.insertBeforeZoneWhenBeforeMax = 7,
-    this.drawBackgroundsForSingleItems = true,
     this.nodeStrokeWidth = 1.3,
-    this.allowInlineInFirstRow = true,
-    this.alwaysVertical = false,
     this.defaultAnimationDuration = 200,
     this.cursorColorLowFade = 0.6,
     this.cursorBlinkDuration = 1200,
     this.cursorColor = const Color.fromARGB(255, 31, 31, 31),
     this.nodeHighlightOutlineInflation = 2,
     this.cursorSpan = 3.3,
-    this.backgroundsOffForBasalNodes = true,
     this.cursorHeight = 14,
     this.cursorSpanWhenInside = 7,
     this.nodeBackgroundCornerRounding = 7,
@@ -1467,6 +1471,75 @@ class TreeWidgetConf {
           (Color.fromARGB(255, 229, 229, 229), 2),
         ]);
   }
+}
+
+/// durations are measured in milliseconds
+@immutable
+class TreeWidgetConf {
+  /// we indirect these out as alterations to behaviors are much more common than alterations to theme, and theme is a large object
+  final TreeTheme theme;
+  final TreeBehaviorControls behavior;
+
+  TreeWidgetConf({
+    TreeTheme? theme,
+    this.behavior = const TreeBehaviorControls(
+        backgroundsOffForBasalNodes: true,
+        allowInlineInFirstRow: false,
+        drawBackgroundsForSingleItems: false,
+        alwaysVertical: false),
+  }) : theme = theme ?? TreeTheme();
+
+  bool get backgroundsOffForBasalNodes => behavior.backgroundsOffForBasalNodes;
+
+  bool get allowInlineInFirstRow => behavior.allowInlineInFirstRow;
+
+  bool get drawBackgroundsForSingleItems =>
+      behavior.drawBackgroundsForSingleItems;
+
+  bool get alwaysVertical => behavior.alwaysVertical;
+
+  double get lineMax => theme.lineMax;
+
+  double get lengthMax => theme.lengthMax;
+
+  double get lengthMin => theme.lengthMin;
+  double get lineHeight => theme.lineHeight;
+  double get indent => theme.indent;
+  double get spacing => theme.spacing;
+
+  double get spacingInLine => theme.spacingInLine;
+
+  double get insertBeforeZoneWhenAfterMin => theme.insertBeforeZoneWhenAfterMin;
+  double get insertBeforeZoneWhenAfterMax => theme.insertBeforeZoneWhenAfterMax;
+  double get insertBeforeZoneWhenAfterRatio =>
+      theme.insertBeforeZoneWhenAfterRatio;
+  double get nodeHighlightOutlineInflation =>
+      theme.nodeHighlightOutlineInflation;
+  double get insertBeforeZoneWhenBeforeMin =>
+      theme.insertBeforeZoneWhenBeforeMin;
+  double get insertBeforeZoneWhenBeforeRatio =>
+      theme.insertBeforeZoneWhenBeforeRatio;
+  double get insertBeforeZoneWhenBeforeMax =>
+      theme.insertBeforeZoneWhenBeforeMax;
+
+  double get parenSpan => theme.parenSpan;
+  double get nodeStrokeWidth => theme.nodeStrokeWidth;
+  List<Color> get nodeBackgroundColors => theme.nodeBackgroundColors;
+  Color get nodeHighlightStrokeColor => theme.nodeHighlightStrokeColor;
+  double get nodeBackgroundCornerRounding => theme.nodeBackgroundCornerRounding;
+  double get defaultAnimationDuration => theme.defaultAnimationDuration;
+
+  double get nearestHitRadius => theme.nearestHitRadius;
+
+  double get cursorSpan => theme.cursorSpan;
+  double get cursorHeight => theme.cursorHeight;
+  Color get cursorColor => theme.cursorColor;
+  int get cursorBlinkDuration => theme.cursorBlinkDuration;
+
+  double get cursorColorLowFade => theme.cursorColorLowFade;
+  double get cursorSpanWhenInside => theme.cursorSpanWhenInside;
+
+  String get fontFamily => theme.fontFamily;
 
   Color backgroundColorFor(int depth) =>
       nodeBackgroundColors[depth % nodeBackgroundColors.length];
@@ -1495,7 +1568,7 @@ List<Color> gradient(List<(Color, int)> nodes) {
       totalList.add(hslerp(c.$1, n.$1, i.toDouble() / c.$2.toDouble()));
     }
   }
-  return totalList;
+  return List.unmodifiable(totalList);
 }
 
 /// a more generic tree widget that is more concerned with layout. Unlike most tree layout widgets that have existed in the flutter ecosystem, it will often automatically lay things out in a horizontal inline flow as long as there isn't too much nested structure.
